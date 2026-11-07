@@ -219,17 +219,21 @@ pnpm verify         # 以上全部 + build
 
 ## 9. 版本库
 
+公开仓库已就绪：<https://github.com/guicaiyue/dsh-archify-projects>（`main`，168 个文件）。
+
 ```bash
 cd D:/projects/blog/dsh-plugins/dsh-archify-projects
-git log --oneline          # 已 init + 首次提交
-# 远端（照兄弟插件的习惯用 SSH）：
-git remote add origin git@github.com:guicaiyue/dsh-archify-projects.git
-git push -u origin main
+git remote -v            # origin git@github.com:guicaiyue/dsh-archify-projects.git
+git push                 # 已 set-upstream，直接推
 ```
 
-远端仓库要先在 GitHub 上建好（本机只有 SSH key，没有 `gh` CLI，也没有 PAT，agent 建不了仓库）。
-`.gitignore` 忽略 `node_modules/ lib/ dist/ coverage/`；`skills/archify/` 是**刻意提交**的，
-不跟着仓库走克隆下来就跑不起来。
+提交习惯：一个功能/一次修复一个 commit，中文 subject（`feat:` / `fix:` / `docs:`），
+正文写清「为什么这么改」，别写「update file」。
+
+> 建仓库这一步 agent 做不了：本机只有 SSH key（能推不能建），没有 `gh` CLI、没有 PAT、
+> `git credential` 里也没有存货。远端仓库必须先由账号持有人在 GitHub 上建好。
+> `.gitignore` 忽略 `node_modules/ lib/ dist/ coverage/`；`skills/archify/` 是**刻意提交**的，
+> 不跟着仓库走克隆下来就跑不起来。
 
 ---
 
