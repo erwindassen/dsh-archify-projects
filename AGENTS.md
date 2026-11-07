@@ -25,7 +25,7 @@
 pnpm verify   # build → artifact:check → typecheck → lint → format:check → deps:check → test
 ```
 
-当前基线：**146 passed / 12 files**。
+当前基线：**154 passed / 12 files**。
 
 ## 产物与数据
 
@@ -42,6 +42,7 @@ pnpm verify   # build → artifact:check → typecheck → lint → format:check
 
 ## 代理能力边界（这是产品的一部分，不是可选项）
 
-插件起的 agent 只能看见 `read/write/edit/glob/grep/skill` + 平台 shell，skill 只认 `archify`。
+插件起的出图 agent 只能看见 `read/write/edit/glob/grep/skill` + 平台 shell；**提问会话更窄，
+只有 `read/glob/grep/skill`**。两类会话的 skill 都只认 `archify`。
 放宽这三层（preset 工具面 / `bundledSkillDir` / `policy.ts` 的 restrict+guard）就是改变产品定位，
 先跟维护者确认。

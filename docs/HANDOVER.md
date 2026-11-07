@@ -22,7 +22,7 @@ DSH 的左栏插件「架构建模」：把一个代码库登记进台账，用*
 | 方面   | 状态                                                                                                                                                          |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 功能   | 新增/删除项目、Git 探测（分支/commit/上游/脏）、首次生成、更新（切分支+快进+重跑）、重新生成单图、运行记录、深/浅色、非 Git 目录、iframe 内嵌预览、新窗口打开 |
-| 测试   | 146 个用例 / 12 个文件，`vitest` 全绿（约 10 s）                                                                                                              |
+| 测试   | 154 个用例 / 12 个文件，`vitest` 全绿（约 2 s）                                                                                                               |
 | 静态门 | `tsc`（两份 tsconfig）、`eslint`、`prettier --check`、`dependency-cruiser`、`artifact:check`（51.5 KB / 220 KB 预算）全绿                                     |
 | 真机   | 在 `127.0.0.1:3080` 的真实宿主里跑通过「Git 项目」与「非 Git 目录」两条路径，深浅色都验过；截图见 [`docs/verify/`](./verify)                                  |
 | 产物   | `~/.dsh/dsh-archify-projects/` 下 1 个项目（`dsh-word-learn`），两张图 ready                                                                                  |
@@ -145,8 +145,15 @@ pnpm verify        # build → artifact:check → typecheck/lint/format/deps →
 | skill 源 | preset 私有的 `dsh-skill-filesystem`：`includeDefaultRoots: false` + `bundledSkillDir` 指向 `skills/` | agent 的 skill 列表里只有 `archify`              |
 | 运行期   | `policy.ts`：`tools.restrict({ allow })` + `tools.guard(fn)`                                          | 即使在名单外被调用也被拒；`skill` 只认 `archify` |
 
-白名单：`read, write, edit, glob, grep, skill` + 平台 shell（Windows `pwsh` / 其它 `bash`）。
+两种会话，白名单不同：
+
+| 会话        | 工具面                                              | 用途                                       |
+| ----------- | --------------------------------------------------- | ------------------------------------------ |
+| 出图（run） | `read, write, edit, glob, grep, skill` + 平台 shell | 读代码、写产物、跑 archify finalize        |
+| 提问（ask） | **只有 `read, glob, grep, skill`**                  | 回答对图的细节提问；没有 shell、没有写工具 |
+
 联网、子 agent、workflow、todo 这些工具**压根不可见**，调用即 `UNKNOWN_TOOL`。
+两类会话的 `skill` 都只认 `archify`。
 
 `tools.restrict` 必须装在 `agent.ctx` 上（根 ctx 直接抛 `requires a scoped context`），
 所以它写在 `runner.ts` 建会话之后、第一条 prompt 之前，只影响本插件起的会话。
@@ -188,7 +195,7 @@ pnpm artifact:check # dist/client.js 体积与外部化
 pnpm verify         # 以上全部 + build
 ```
 
-当前基线：**146 passed / 12 files**，`coverage` 目录不进版本库。
+当前基线：**154 passed / 12 files**，`coverage` 目录不进版本库。
 
 测试布局（改哪儿补哪儿）：
 
@@ -273,3 +280,71 @@ git push                 # 已 set-upstream，直接推
    对 `dsh-word-learn` 点一次「重新生成」——用一张图确认「路由 → 会话 → 产物 → iframe」整条链在你手里是通的。
 3. 读 `docs/DESIGN.md` 的 §3（数据模型）/ §5.4（runner）/ §7（前端）。
 4. 想改行为，先在 `tests/unit/` 里写一条会红的用例再动手。
+
+---
+
+## 12. v0.3 变更：从「两张图」到「图册」
+
+> 本节描述当前（2026-11-08）的模型；§1–§11 里仍按 v0.1 写的口径以本节为准。
+
+### 12.1 版本口径
+
+- **分支级，不是 commit 级**：`DiagramState` 记录 `branch` + `tree`（暂存/未暂存/未跟踪计数），
+  `isStale` 只看「分支变了 / 工作区变了」，不看新 commit。
+- `git status --porcelain` 由 `parseTree()` 解析成三个计数（`src/host/git.ts`）；
+  **暂存区内容也算代码证据**，提示词里明确写「以工作区当前内容为准」。
+
+### 12.2 数据模型（`src/shared/types.ts`，`LEDGER_VERSION = 2`）
+
+```ts
+Project {
+  git: GitSnapshot            // + tree: { staged, unstaged, untracked }
+  diagrams: { structure, domain }   // 默认两张，id 固定为 structure / domain
+  custom: DiagramState[]      // 任意自定义图，id = dgm_xxx
+  concepts: Concept[]         // 项目级概念表（id/name/summary/evidence/tags）
+  qa: QaEntry[]               // 对图的提问记录（diagramId/question/answer/applied）
+  runs / lastRun              // + diagramIds
+}
+DiagramState {
+  id, kind: structure|domain|custom, title, prompt,
+  persistence: permanent|temporary, parentId, setId, conceptIds,
+  status, htmlPath, specPath, generatedAt, branch, tree, error
+}
+```
+
+- `permanent`：prompt 存台账，`更新图册` 时自动用同一 prompt 重画；
+- `temporary`：只跑这一次，`更新图册` 时不选它（产物仍可看）；
+- `parentId` 构成父子图；`setId` 相同 = 一套图（大图 + 细节小图）；
+- 概念是项目级，图只引用 `conceptIds` 子集。
+
+迁移在 `store.normalize`：v1 的 `diagrams.structure/domain` 对象直接读成两张永久图，
+其余字段（prompt/parent/set/concepts）补默认值；旧台账不需要手工改。
+
+### 12.3 接口新增
+
+| 方法         | 路径                                           | 用途                                                                          |
+| ------------ | ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| POST         | `/projects/:id/diagrams`                       | 新建自定义图（`{title, prompt, persistence?, parentId?, conceptIds?, run?}`） |
+| PATCH/DELETE | `/projects/:id/diagrams/:diagramId`            | 改标题/prompt/时效/概念；删图（连带子图与 qa）                                |
+| POST         | `/projects/:id/diagrams/:diagramId/regenerate` | 重画单张（默认图与自定义图同一入口）                                          |
+| POST         | `/projects/:id/diagrams/:diagramId/ask`        | 只读提问，回答落 `qa[]`                                                       |
+| POST         | `/projects/:id/qa/:qaId/merge`                 | 把回答并进图（prompt 追加「用户追问补充」后重画）                             |
+| POST         | `/projects/:id/qa/:qaId/child`                 | 以回答为 prompt 建子图                                                        |
+
+`/projects/:id/diagram/:kind` 保留为兼容入口。
+
+### 12.4 提示词与上下文（`src/shared/prompt.ts`）
+
+- `buildRunPrompt`：环境事实（分支 + 工作区计数）→ 概念表契约（写 `concepts.json`）→
+  每张图的建模口径/自定义 prompt → archify 调用方式（目录名以图 id 开头）→
+  `ARCHIFY_ARTIFACT <id> <path>` 回报标记。
+- `buildAskPrompt`：只给「这张图的 prompt + candidate.json 截断 + 绑定的概念及证据文件 +
+  代码库根目录」，要求先结论后依据、查不到就说没有、最后给「建议补进图里的节点/关系」。
+- 问答会话的工具面由 `policy.readonlyToolNames()` 收口为 `read/glob/grep/skill`。
+
+### 12.5 页面
+
+三栏工作台（`src/client/page.tsx`）：左「图册树」（默认套图 / 自定义 / 子图 / 概念索引）、
+中「查看器」（iframe + 子图缩略条）、右「检查器」（图信息 / 提问）。
+总览是项目卡片墙（分支、工作区计数、概念数、过期提示）。样式仍只用 DSH token，
+单 bundle 81.6 KB（预算 220 KB）。
