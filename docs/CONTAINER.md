@@ -81,19 +81,34 @@ docker compose restart dsh
 
 ---
 
-## 4. 验证插件真的挂上了
+## 4. 访问与登录（不用反复找 token）
 
-token 每次重启都换，且未登录访问一律 401（不是路由不存在）：
+未登录访问一律 401（不是路由不存在）。登录一次就够，之后靠 cookie：
 
 ```sh
 cd ~/Projects/dsh-docker
 
-# 1) 从日志抓带 token 的登录地址
-docker compose logs dsh | grep -o 'http://localhost:3080/?token=[^ ]*' | tail -1
+./dev-url.sh              # 打印地址；cookie 失效时才自动从日志抓 token 登录
+./dev-url.sh --check      # 只检查 cookie 是否还有效（退出码 0/1）
+./dev-url.sh --open       # 用默认浏览器打开
+./dev-url.sh --token-url  # 打印一次性的 token 地址（给浏览器首次登录用）
+```
 
-# 2) 用 cookie 登录（303 种 cookie），再打插件 health
-curl -s -c /tmp/dsh-cj -o /dev/null 'http://127.0.0.1:3080/?token=…'
-curl -s -b /tmp/dsh-cj http://127.0.0.1:3080/dsh-archify-projects/health
+- **cookie 才是常态**：登录成功后 cookie 有效期 30 天，签名密钥存在
+  `/data/dsh/.credentials.yaml` 的 `client-connection/browser-session` 记录里，
+  **重启容器不会失效**（实测 `docker compose restart dsh` 后旧 cookie 仍是 200）。
+- **token 每次启动都换**，只用来换 cookie，不需要保存，更不用每次去日志里翻。
+- **cookie 按 `host:port` 分开**：`localhost:3080` 和 `127.0.0.1:3080` 是两套登录，
+  固定用一个（脚本默认 `127.0.0.1`，用 `DSH_DEV_BASE` 可改）。浏览器里第一次要访问
+  `./dev-url.sh --token-url` 打印的地址，之后直接开干净的地址。
+- `dev-url.sh` 的 cookie jar 在 `~/.local/state/dsh-dev/cookies.txt`，是给 CLI / agent
+  用的；浏览器自己的 cookie 在浏览器 profile 里，两边互不影响。
+
+### 验证插件挂上了
+
+```sh
+curl -s -b ~/.local/state/dsh-dev/cookies.txt \
+  http://127.0.0.1:3080/dsh-archify-projects/health
 ```
 
 期望 `200`，并且：
@@ -114,7 +129,13 @@ curl -s -b /tmp/dsh-cj http://127.0.0.1:3080/dsh-archify-projects/health
 > `sessionController` 还没注册完（模块并行加载的竞态）。它只用于诊断，runner 是
 > 运行期再解析服务的——`POST /projects` 能拿到 `sessionId` 就说明会话链路是通的。
 
----
+### 页面长这样（2026-11-07 实测）
+
+![dev 首页：左栏有「架构建模」，模型选择器是 deepseek/deepseek-v4.1-flash](verify/container-home.png)
+
+![架构建模页面：工作区指向 /data/dsh/dsh-archify-projects/workspace，空台账](verify/container-archify.png)
+
+![模型菜单：只有 self 路由的 deepseek/deepseek-v4.1-flash](verify/container-model.png)
 
 ## 5. 模型凭据（没有它 agent 起不来）
 
