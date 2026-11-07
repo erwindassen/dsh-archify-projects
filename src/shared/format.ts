@@ -1,0 +1,118 @@
+/**
+ * 展示与文件名用的纯函数（零 IO）。
+ *
+ * 这些函数被 host（拼目录名、写日志）和 client（渲染 Git 条、时间）同时使用，
+ * 所以不能碰 Date.now() —— 当前时间一律由调用方传入，测试才能确定性。
+ */
+
+import type { DiagramKind, GitSnapshot, Project } from './types.js'
+
+/** 空值占位符，页面统一用它，避免各处出现 '' / '-' / '—' 三种。 */
+export const PLACEHOLDER = '—'
+
+/** commit 短写（7 位）；空值给占位符。 */
+export function shortCommit(commit: string | null | undefined): string {
+  if (commit === null || commit === undefined || commit.length === 0) return PLACEHOLDER
+  return commit.slice(0, 7)
+}
+
+/** 本地时间戳 `YYYYMMDD-HHMMSS`，用作 archify 目录名后缀。 */
+export function formatStamp(date: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return (
+    `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}` +
+    `-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+  )
+}
+
+/** 相对时间的结构化形态：单位与数值分开，交给调用方决定用哪种语言说。 */
+export interface RelativeSpan {
+  readonly kind: 'now' | 'minutes' | 'hours' | 'days' | 'date'
+  readonly value: number
+  readonly date?: string
+}
+
+/**
+ * 相对时间（结构化）。
+ *
+ * 页面要中英双语，日文/德文同理，所以这里**不拼句子**，只回答
+ * 「多久以前、以什么粒度」—— 拼句子是渲染层的事。
+ */
+export function relativeSpan(iso: string | null | undefined, now: Date): RelativeSpan | null {
+  if (iso === null || iso === undefined || iso.length === 0) return null
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return null
+  const deltaSec = Math.round((now.getTime() - then) / 1000)
+  if (deltaSec < 60) return { kind: 'now', value: 0 }
+  if (deltaSec < 3600) return { kind: 'minutes', value: Math.floor(deltaSec / 60) }
+  if (deltaSec < 86400) return { kind: 'hours', value: Math.floor(deltaSec / 3600) }
+  if (deltaSec < 86400 * 30) return { kind: 'days', value: Math.floor(deltaSec / 86400) }
+  return { kind: 'date', value: 0, date: new Date(then).toISOString().slice(0, 10) }
+}
+
+/** 相对时间文案（中文）。宿主日志与兜底用；页面走 `relativeSpan`。 */
+export function formatRelative(iso: string | null | undefined, now: Date): string {
+  if (iso === null || iso === undefined || iso.length === 0) return PLACEHOLDER
+  const then = new Date(iso).getTime()
+  if (Number.isNaN(then)) return PLACEHOLDER
+  const deltaSec = Math.round((now.getTime() - then) / 1000)
+  if (deltaSec < 0) return '刚刚'
+  if (deltaSec < 60) return '刚刚'
+  if (deltaSec < 3600) return `${Math.floor(deltaSec / 60)} 分钟前`
+  if (deltaSec < 86400) return `${Math.floor(deltaSec / 3600)} 小时前`
+  if (deltaSec < 86400 * 30) return `${Math.floor(deltaSec / 86400)} 天前`
+  return new Date(then).toISOString().slice(0, 10)
+}
+
+/** ahead / behind 文案。两者都为 null（无上游）时返回 null，页面据此隐藏整块。 */
+export function aheadBehindText(ahead: number | null, behind: number | null): string | null {
+  if (ahead === null && behind === null) return null
+  const parts: string[] = []
+  if (ahead !== null && ahead > 0) parts.push(`↑${ahead}`)
+  if (behind !== null && behind > 0) parts.push(`↓${behind}`)
+  return parts.length > 0 ? parts.join(' ') : '同步'
+}
+
+/** Git 单行摘要：`branch @ shortcommit`，无 Git 时说明来源是当前目录。 */
+export function gitSummary(git: GitSnapshot): string {
+  if (!git.isRepo) return '非 Git 目录 · 基于当前目录分析'
+  const where = git.detached ? `detached ${shortCommit(git.commit)}` : (git.branch ?? PLACEHOLDER)
+  return `${where} @ ${shortCommit(git.commit)}`
+}
+
+/** 目录名安全化：只留 ASCII 字母数字与短横，其它折叠成单个短横。 */
+export function slugify(input: string): string {
+  const ascii = input
+    .normalize('NFKD')
+    .replace(/[^\x20-\x7E]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  if (ascii.length === 0) return 'project'
+  return ascii.slice(0, 40).replace(/-+$/g, '')
+}
+
+/** archify 目录名：`<type>-<slug>-<stamp>`，与 Skill 的约定一致。 */
+export function archifyDirName(kind: DiagramKind, slug: string, stamp: string): string {
+  return `${kind}-${slugify(slug)}-${stamp}`
+}
+
+/** 图谱类型的中文标题。 */
+export function diagramTitle(kind: DiagramKind): string {
+  return kind === 'structure' ? '项目结构图' : '领域图'
+}
+
+/** 两张图里最新的生成时间（用于「上次分析」）。 */
+export function latestGeneratedAt(project: Project): string | null {
+  const stamps = [project.diagrams.structure.generatedAt, project.diagrams.domain.generatedAt]
+    .filter((v): v is string => v !== null)
+    .sort()
+  return stamps.length > 0 ? (stamps[stamps.length - 1] as string) : null
+}
+
+/** 把绝对路径缩成「末两段」，页面里放不下全路径时用。 */
+export function tailPath(fullPath: string, segments = 2): string {
+  const parts = fullPath.split(/[\\/]+/).filter((p) => p.length > 0)
+  if (parts.length <= segments) return fullPath
+  return `…/${parts.slice(-segments).join('/')}`
+}

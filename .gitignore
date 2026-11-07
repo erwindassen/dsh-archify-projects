@@ -1,0 +1,12 @@
+node_modules/
+coverage/
+lib/
+dist/
+
+# 本地产物与日志
+*.log
+.DS_Store
+
+# skills/archify/ 是刻意提交的第三方 vendored skill（约 7.3 MB）：
+# 它是 preset 唯一的 skill 来源，不跟着仓库走，克隆下来就跑不起来。
+# 升级方式见 README「依赖」一节 —— 重新拉 tarball 覆盖即可。

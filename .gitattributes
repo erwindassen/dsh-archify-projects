@@ -1,0 +1,12 @@
+# 统一行尾，避免 Windows 上 checkout 出 CRLF 污染 lint/format 结果
+* text=auto eol=lf
+
+# 二进制产物别当文本处理
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
+
+# vendored 第三方 skill 原样保留（上游可能有自己的行尾约定）
+skills/** -text

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Archify Projects",
+    "description": "Register local repositories, detect their Git branch and commit automatically, and let a DSH agent produce explorable Archify structure and domain diagrams — then switch back to the recorded branch, update to the latest commit, and redraw."
+  }
+}

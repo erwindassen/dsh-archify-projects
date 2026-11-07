@@ -1,0 +1,57 @@
+# dsh-archify-projects —— DSH bundle patch
+#
+# 两件事：
+#   1. 挂载插件本体（宿主路由 + 客户端页面）；
+#   2. 声明一个受限 agent preset：只给 fs / fs-search / shell / skill 四类工具，
+#      skill 侧由 preset 私有的 skill-filesystem 只供应 archify。
+#
+# 工具白名单与执行层守卫不在这里，走 `src/host/policy.ts`：
+# tools.restrict 要求 scoped ctx（agent.ctx），写在 preset 行里会直接抛。
+#
+# skill 侧：includeDefaultRoots=false 关掉 user/project 两个默认根，
+# bundledSkillDir 指到本插件自带的 skills/（里面只有 archify 一份）。
+# 这样这个 agent 的 skill 目录里只有 archify —— 不依赖宿主碰巧装了别的什么。
+
+- insert:
+    - id: dsh-archify-projects
+      name: dsh-archify-projects
+    - id: preset-archify-projects
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: archify-projects
+        name: Archify 图谱
+        description: 只用于代码库架构/领域建模出图；skill 只有 archify，无关工具禁用
+        order: 20
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: >-
+                You are an architecture-mapping agent. Your only deliverable is
+                Archify diagrams produced from repository evidence. Prefer reading
+                real files over guessing.
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              # schemastery 里 sampleOverCapGlobResults 是 required，不写整个 preset
+              # 会在建会话时抛 invalid config，表现为「agent 起不来」。
+              sampleOverCapGlobResults: true
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: archify-skill
+            name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              providerName: archify-projects
+              includeDefaultRoots: false
+              # 指向本插件自带的 skills/ 目录（内嵌一份 archify skill）。
+              # 之前这里解析的是 @tt-a1i/archify-dsh —— 那个包一旦被卸载，
+              # 整个 preset 建会话就抛 Cannot find module，图一张都出不来。
+              bundledSkillDir: !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-archify-projects/package.json')), 'skills')
