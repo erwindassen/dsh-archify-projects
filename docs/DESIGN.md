@@ -534,3 +534,164 @@ dsh-archify-projects/
 
 **落地顺序**（待维护者确认后开工）：页面拆两屏（overview / detail）→ `RunRecord` 补
 `artifacts` 并回填历史 → 版本时间线 → 生成步骤条 → 导出。
+
+---
+
+## 13. v0.3 图册模型（2026-11-07，按需求收敛）
+
+**一句话**：从「一个仓库两张固定图」升级成「一个仓库一册图」——先提取**概念**，
+再用自然语言 prompt 让 agent 按概念出图；图有**临时/永久**两种时效、可以**父子嵌套**
+和**大图配小图**，还能对着一张图**追问并自动补细节**。
+
+原型：`docs/design/workbench-v03.html`（OpenDesign 项目 `archify-workbench-v03`），
+截图 `docs/design/v03-*.png`。
+
+### 13.1 版本口径：分支级，不是 commit 级
+
+这是和 v0.1/v0.2 最大的区别，**台账里不再用 commit 标识「这一版图」**：
+
+| 维度       | v0.2                    | v0.3                                               |
+| ---------- | ----------------------- | -------------------------------------------------- |
+| 版本键     | `branch + commit`       | `branch`（+ 工作区状态）                           |
+| 工作区改动 | 只标记 dirty            | **纳入分析**：暂存区（staged）和未暂存都算代码证据 |
+| 产物归属   | 一次运行对应一个 commit | 一次运行对应「某分支当时的代码（含工作区）」       |
+| 展示       | 显示生成时的 commit     | 显示 `分支 · 含工作区改动 · 生成时间`              |
+
+理由：开发中真正想看的是「我现在这份代码长什么样」，而不是某个历史 commit 的冻结快照。
+`headCommit` 仍可作为**内部溯源**（日志、排障）记录，但不进版本键、不进 UI 主文案。
+
+因此「过期」的判定从「commit 变了」改成：
+
+- 分支变了（`git.branch !== diagram.branch`）；
+- 或工作区状态变了（`dirty` 标志或 staged/unstaged 计数与生成时不同）；
+- 或距上次生成超过阈值（提示但不强制）。
+
+### 13.2 概念（Concept）：图的第一等公民
+
+概念是从代码里提取的、可复用的架构单元，**属于项目**而不是属于某张图：
+
+```jsonc
+// 项目级概念表（存 workspace/<projectId>/concepts.json）
+{
+  "version": 1,
+  "concepts": [
+    {
+      "id": "cpt_ledger",
+      "name": "项目台账",
+      "summary": "projects.json 是唯一真相，产物路径相对 workspace 存储",
+      "evidence": ["src/host/store.ts", "src/host/config.ts"], // 来源文件，供追问时定位
+      "tags": ["data", "invariant"],
+      "branch": "main",
+      "updatedAt": "...",
+    },
+  ],
+}
+```
+
+- 概念在**首次生成**时提取（约 15–25 个），之后每次更新增量维护（新增/合并/废弃）。
+- 图只引用**概念子集**（`conceptIds`），所以「补充细节」= 往图里加概念，
+  「创建子图」= 用其中一两个概念单独立一张图。
+- 概念跨图复用：同一份概念既能进结构图，也能进自定义图，不用重复提取。
+
+### 13.3 图（Diagram）与套图（Set）
+
+```jsonc
+{
+  "id": "dgm_host_modules",
+  "projectId": "prj_...",
+  "title": "src/host 模块结构",
+  "kind": "structure" | "domain" | "custom",
+  "prompt": "画出 src/host 的模块结构，标出 routes → runner 的调用关系",  // 永久图必填
+  "persistence": "permanent" | "temporary",     // ★ 时效
+  "parentId": "dgm_structure",                  // 可选：挂在哪张图下（父子）
+  "setId": "set_structure",                     // 可选：属于哪套图（大图配小图）
+  "conceptIds": ["cpt_route", "cpt_runner", "..."],
+  "branch": "main",
+  "generatedAt": "...",
+  "htmlPath": ".archify/main/structure-.../x.html",   // 相对 workspaceRoot
+  "status": "idle" | "queued" | "running" | "ready" | "failed",
+  "error": null
+}
+```
+
+**时效（这是需求里最核心的新概念）**：
+
+| 时效                | 行为                                                                          | 存哪                                                    |
+| ------------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `permanent`（永久） | prompt **存进台账**；下次「更新图册」自动用同一 prompt 重画；出现在侧栏图册里 | `projects.json` 的 `diagrams[]`                         |
+| `temporary`（临时） | 只跑这一次，产物留在磁盘但**不进下次更新计划**；prompt 不存（或存了也不复用） | 台账里可留一条 `temporary` 记录用于本次展示，更新时清理 |
+
+「任何图或套图都能临时/永久」→ 时效字段放在**图**上，套图的时效由其成员推导：
+一套图里只要有一张永久，这套图就会在下次更新时被重建（其余临时成员按需重画）。
+
+**套图**：`setId` 相同的图构成一套，约定「一张大图 + N 张细节小图」：
+
+```
+set_structure
+├── 大图  src/host 模块结构（永久）
+├── 小图  routes 内部（永久）
+├── 小图  runner 生命周期（永久）
+└── 小图  台账读写（临时）
+```
+
+UI 上大图铺满查看器，小图在下方缩略图条里点选切换；父图上的「+ 子图」直接用选中的
+概念开一张新图并挂上 `parentId`。
+
+### 13.4 追问与自动补细节
+
+每张图有独立的问答线程（`qa[]`），问题走**同一个受限 agent**，但 prompt 带三样上下文：
+
+1. 这张图的 prompt 与概念子集；
+2. 图产物的 `candidate.json`（已有哪些节点/边）；
+3. 概念的 `evidence` 文件路径（让 agent 能真的去读代码回答，而不是编）。
+
+回答下面给两个动作，正好对应需求里的两种「补充」：
+
+- **补进图里**：把新概念/新节点合并进当前图 → 产生该图的新版本（旧版本按时间戳保留）；
+- **创建子图**：以这次回答为 prompt 开一张子图（`parentId` = 当前图，默认永久）。
+
+> 注意：问答本身不消耗「更新」额度，但要防止滥用——同一张图并发提问超过 1 个时排队。
+
+### 13.5 数据落盘
+
+```
+$DSH_HOME/dsh-archify-projects/
+  projects.json                       # 台账：projects[] + 每个项目的 diagrams[]
+  workspace/<projectId>/
+    concepts.json                     # 项目级概念表
+    .archify/<branch-slug>/<diagramId>-<stamp>/
+      candidate.json                  # 图的结构化描述（节点/边/分组）
+      <slug>.html                     # 成品
+      qa.jsonl                        # 该图的问答记录
+```
+
+**不变量更新**：
+
+1. `ready` 必须有 `htmlPath`；`temporary` 图不参与下次更新计划。
+2. 任何时刻最多一条 `runs[]` 是 `running`。
+3. `parentId` 必须指向同项目存在的图；`setId` 成员必须同项目、同 branch。
+4. 删除项目要连概念表与整棵子图一起删。
+5. 概念被删除前，先摘掉引用它的图（或标 `concept-missing` 让用户决定）。
+
+### 13.6 页面结构调整（v0.3 原型）
+
+| 区域       | v0.2                    | v0.3                                                                                                                                    |
+| ---------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| 总览       | 项目卡片墙              | 卡片墙 + 概念数 + 图/套图数 + 「工作区有改动」统计                                                                                      |
+| 工作区布局 | 左列表 + 右详情（单列） | **三栏**：左「图册树」（默认套图 / 自定义 / 当前图的小图 / 概念索引）、中「查看器」（大图 + 小图缩略条）、右「检查器」（图信息 / 提问） |
+| 版本       | 时间线（按 commit）     | 分支选择 + 工作区状态条（不再列 commit）                                                                                                |
+| 新建图     | 无                      | 对话框：prompt + 时效（永久/临时）+ 归属（独立套图/挂父图）+ 概念范围                                                                   |
+| 提问       | 无                      | 右栏「提问」页签：线程 + 「补进图里」/「创建子图」                                                                                      |
+
+### 13.7 落地顺序
+
+1. **数据模型**：`Diagram` 加 `prompt/persistence/parentId/setId/conceptIds/branch`，
+   `RunRecord` 加 `artifacts`；`concepts.json` 与迁移（旧台账只有两张图 → 升级成
+   `permanent` + `kind` 对应）。
+2. **分支级 Git**：`git.ts` 补 `staged/unstaged` 计数；更新判定改为分支+工作区。
+3. **更新编排**：`update` 跑「默认两张永久图 + 所有 `permanent` 自定义图」，
+   临时图不跑；每张图一个产物目录。
+4. **概念提取**：prompt 里加「先输出概念清单再画图」，落 `concepts.json`。
+5. **问答**：`POST /diagrams/:id/ask`，复用受限 agent，回答落 `qa.jsonl`，
+   两个动作各对应一个路由（merge / create-child）。
+6. **前端**：三栏工作区 + 新建图对话框 + 问答页签（原型已定稿）。
