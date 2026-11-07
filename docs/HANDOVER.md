@@ -35,16 +35,21 @@ DSH 的左栏插件「架构建模」：把一个代码库登记进台账，用*
 ## 2. 五分钟跑起来
 
 ```bash
-cd D:/projects/blog/dsh-plugins/dsh-archify-projects
+cd ~/Projects/dsh-archify-projects    # Windows 检出在 D:/projects/blog/dsh-plugins/dsh-archify-projects
 pnpm install
 pnpm verify        # build → artifact:check → typecheck/lint/format/deps → test
 ```
+
+> **在 Linux 上开发／验证，优先用容器**：`~/Projects/dsh-docker` 的 `dsh-dev`
+> （`127.0.0.1:3080`）已经把本仓库挂成 profile 的 bundle，改源码不用碰宿主 `~/.dsh`。
+> 绑定关系、日常循环、模型凭据、冒烟步骤都写在 [CONTAINER.md](./CONTAINER.md)。
+> 下面这段是「装进本机 DSH」的通用流程，容器已经替你做过。
 
 装进 DSH（已在 `~/.dsh/profiles/web` 里做好，`link:` 形式）：
 
 ```jsonc
 // ~/.dsh/profiles/web/package.json
-"dependencies": { "dsh-archify-projects": "link:D:/projects/blog/dsh-plugins/dsh-archify-projects" },
+"dependencies": { "dsh-archify-projects": "link:/home/xirizhi/Projects/dsh-archify-projects" },
 "dsh": { "profile": { "bundles": [ /* ... 其它 ... */, "dsh-archify-projects" ] } }
 ```
 
@@ -256,6 +261,7 @@ git push                 # 已 set-upstream，直接推
 | `src/client/*`              | 1570   | 页面、组件、样式、文案、fetch                                                                             |
 | `cordis.patch.yml`          | 57     | 挂插件 + 声明受限 preset。**改 preset 要重启**                                                            |
 | `docs/DESIGN.md`            | 498    | 设计取舍、数据模型、里程碑与验证记录                                                                      |
+| `docs/CONTAINER.md`         | —      | dsh-dev 容器里的绑定关系、日常循环、模型凭据与冒烟步骤                                                    |
 | `skills/archify/`           | 7.3 MB | vendored 的 archify skill（第三方，勿手改）                                                               |
 
 ---

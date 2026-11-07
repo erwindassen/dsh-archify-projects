@@ -13,6 +13,12 @@
 3. **只用宿主 token（`--dsw-alias-*`）上色**，禁止硬编码颜色；`dist/client.js` 有
    220 KB 预算（`pnpm artifact:check`）。
 
+## 在容器里开发（Linux 首选）
+
+`~/Projects/dsh-docker` 的 `dsh-dev`（`127.0.0.1:3080`）已把本仓库挂成 profile 的 bundle，
+不碰宿主 `~/.dsh`。改完 `src/host/**` 在容器里 `pnpm build` + `docker compose restart dsh`
+即生效；绑定关系、模型凭据、验证与冒烟见 [`docs/CONTAINER.md`](docs/CONTAINER.md)。
+
 ## 提交前必须绿
 
 ```bash
