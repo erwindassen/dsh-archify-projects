@@ -133,7 +133,7 @@ describe('Runner', () => {
     const after = await store.get('prj_1')
     expect(after?.lastRun?.status).toBe('succeeded')
     expect(after?.diagrams.structure.status).toBe('ready')
-    expect(after?.diagrams.structure.commit).toBe('abcdef1234567890')
+    expect(after?.diagrams.structure.branch).toBe('main')
     // 路径存成相对工作区的 posix 形式，页面拼 URL 才不会错
     expect(after?.diagrams.structure.htmlPath).toBe('prj_1/.archify/structure-demo-1/demo.html')
 
@@ -215,5 +215,63 @@ describe('Runner', () => {
     const after = await store.get('prj_1')
     expect(after?.runs).toHaveLength(2)
     expect(after?.runs.map((r) => r.kind)).toEqual(['create', 'regenerate'])
+  })
+
+  test('自定义图按 id 回收产物，并把 concepts.json 并进概念表', async () => {
+    const project = await seedProject()
+    const custom = {
+      ...project.diagrams.structure,
+      id: 'dgm_trace',
+      kind: 'custom' as const,
+      title: '调用链',
+      prompt: '画出更新调用链',
+      persistence: 'permanent' as const,
+      parentId: null,
+      setId: null,
+      status: 'idle' as const,
+      htmlPath: null,
+      specPath: null,
+      generatedAt: null,
+      branch: null,
+      tree: null,
+      error: null,
+    }
+    await store.patch('prj_1', (current) => ({ ...current, custom: [custom] }))
+    const full = path.join(projectDir(config(), 'prj_1'), '.archify', 'dgm_trace-1', 'x.html')
+    await mkdir(path.dirname(full), { recursive: true })
+    await writeFile(full, '<html></html>', 'utf8')
+    await writeFile(path.join(path.dirname(full), 'candidate.json'), '{}', 'utf8')
+    await writeFile(
+      path.join(projectDir(config(), 'prj_1'), 'concepts.json'),
+      JSON.stringify({
+        concepts: [{ id: 'cpt_a', name: '台账', summary: '唯一真相', evidence: ['src/store.ts'] }],
+      }),
+      'utf8',
+    )
+    const { ctx } = makeCtx({ finalText: `ARCHIFY_ARTIFACT dgm_trace ${full}` })
+    const runner = new Runner({ ctx, store, config: config(), skillDir: async () => null })
+    const latest = (await store.get('prj_1')) as Project
+    await runner.start(latest, 'create', ['dgm_trace'])
+    await runner.whenSettled('prj_1')
+    const after = await store.get('prj_1')
+    expect(after?.custom[0]?.status).toBe('ready')
+    expect(after?.custom[0]?.htmlPath).toBe('prj_1/.archify/dgm_trace-1/x.html')
+    expect(after?.concepts.map((c) => c.id)).toEqual(['cpt_a'])
+  })
+
+  test('提问会话只给 read/glob/grep/skill，回答落 qa', async () => {
+    const project = await seedProject()
+    const { ctx, scope } = makeCtx({
+      finalText: '路由注册失败会 warn 并跳过（src/host/index.ts）。',
+    })
+    const runner = new Runner({ ctx, store, config: config(), skillDir: async () => null })
+    const result = await runner.ask(project, 'structure', '路由注册失败会怎样？')
+    expect(result.entry.answer).toContain('warn')
+    const after = await store.get('prj_1')
+    expect(after?.qa).toHaveLength(1)
+    expect(after?.qa[0]?.question).toContain('路由注册失败')
+    const allow = scope.tools.restrict.mock.calls[0]?.[0] as { allow: string[] }
+    expect(allow.allow).toEqual(['read', 'glob', 'grep', 'skill'])
+    expect(allow.allow).not.toContain('bash')
   })
 })

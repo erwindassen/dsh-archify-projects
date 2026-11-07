@@ -33,6 +33,7 @@ function run(id: string, status: RunRecord['status'] = 'running'): RunRecord {
     finishedAt: null,
     error: null,
     note: null,
+    diagramIds: [],
   }
 }
 
@@ -48,19 +49,25 @@ describe('discoverArtifacts', () => {
   test('按目录名前缀归类', async () => {
     await place('prj_a', 'structure-demo-20260101-000000', 'demo.html')
     await place('prj_a', 'domain-demo-20260101-000000', 'demo.html')
-    const found = await discoverArtifacts(config(), 'prj_a')
+    const found = await discoverArtifacts(config(), 'prj_a', ['structure', 'domain'])
     expect(found.get('structure')).toContain('structure-demo')
     expect(found.get('domain')).toContain('domain-demo')
   })
 
   test('architecture- 前缀算结构图（archify 的 type 叫 architecture）', async () => {
     await place('prj_b', 'architecture-demo-20260101-000000', 'demo.html')
-    const found = await discoverArtifacts(config(), 'prj_b')
+    const found = await discoverArtifacts(config(), 'prj_b', ['structure', 'domain'])
     expect(found.get('structure')).toContain('architecture-demo')
   })
 
+  test('自定义图按 id 前缀归类', async () => {
+    await place('prj_d', 'dgm_trace-20260101-000000', 'trace.html')
+    const found = await discoverArtifacts(config(), 'prj_d', ['dgm_trace'])
+    expect(found.get('dgm_trace')).toContain('dgm_trace-20260101')
+  })
+
   test('没有 .archify 目录时返回空，不抛', async () => {
-    const found = await discoverArtifacts(config(), 'prj_none')
+    const found = await discoverArtifacts(config(), 'prj_none', [])
     expect(found.size).toBe(0)
   })
 
@@ -68,7 +75,7 @@ describe('discoverArtifacts', () => {
     const dir = path.join(projectDir(config(), 'prj_c'), '.archify', 'structure-x-1')
     await mkdir(dir, { recursive: true })
     await writeFile(path.join(dir, 'candidate.json'), '{}', 'utf8')
-    expect((await discoverArtifacts(config(), 'prj_c')).size).toBe(0)
+    expect((await discoverArtifacts(config(), 'prj_c', ['structure'])).size).toBe(0)
   })
 })
 

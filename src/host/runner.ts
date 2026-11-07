@@ -1,5 +1,5 @@
 /**
- * Agent 编排：一次运行 = 一个 DSH 会话 + 一段结构化提示词 + 产物回收。
+ * Agent 编排：一次运行 = 一个 DSH 会话 + 一段结构化提示词 + 产物/概念回收。
  *
  * 走的是宿主已经有的东西，不新造轮子：
  *   - 会话由 `ctx.sessionController.create({ cwd, agentPreset })` 起（复用 DSH 的
@@ -7,20 +7,31 @@
  *   - 提示词经 `ctx.sessionController.prompt(...)` 进 agent 收件箱；
  *   - 结束靠 `agent.whenIdle()`，产物靠「标记优先 + 目录兜底」回收。
  *
- * 运行是**异步**的：HTTP 路由立刻返回 runId + sessionId，页面可以马上显示「生成中」
- * 并给出会话链接，不必等一次模型调用跑完。
+ * 两种会话：
+ *   - 出图：可写工作目录，跑 archify；
+ *   - 提问：只读（read / glob / grep / skill），上下文只有这张图 + 概念表 + 代码库。
  */
 
-import { readdir, stat } from 'node:fs/promises'
+import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
-import { buildRunPrompt, parseArtifactMarkers } from '../shared/prompt.js'
 import {
+  buildAskPrompt,
+  buildRunPrompt,
+  parseArtifactMarkers,
+  type PromptDiagram,
+} from '../shared/prompt.js'
+import {
+  allDiagrams,
   DIAGRAM_KINDS,
+  findDiagram,
+  type Concept,
   type DiagramKind,
   type DiagramState,
   type Project,
   type RunKind,
   type RunRecord,
+  type QaEntry,
+  type TreeState,
 } from '../shared/types.js'
 import { projectDir, workspaceRoot, type ResolvedConfig } from './config.js'
 import {
@@ -29,7 +40,12 @@ import {
   type HostContext,
   type SessionControllerLike,
 } from './context.js'
-import { allowedToolNames, tightenAgent } from './policy.js'
+import {
+  allowedToolNames,
+  readonlyToolNames,
+  tightenAgent,
+  tightenReadOnlyAgent,
+} from './policy.js'
 import type { ProjectStore } from './store.js'
 import { ensureProjectWorkspace } from './workspace.js'
 
@@ -47,6 +63,12 @@ export interface RunnerDeps {
   readonly config: ResolvedConfig
   /** 懒解析 archify skill 目录（可能为 null，表示降级）。 */
   readonly skillDir: () => Promise<string | null>
+}
+
+/** 一次提问的结果。 */
+export interface AskResult {
+  readonly sessionId: string | null
+  readonly entry: QaEntry
 }
 
 /** 生成可读的运行 id（不追求全局唯一，台账里可区分即可）。 */
@@ -84,15 +106,21 @@ export class Runner {
   }
 
   /**
-   * 起一次运行：登记状态 → 建会话 → 投递提示词 → 后台等待结束。
+   * 起一次出图运行。
    *
-   * 返回时 `sessionId` 已确定（会话创建是同步等到的），所以页面能立刻给出会话链接。
+   * `diagramIds` 里默认图用 `structure` / `domain`，自定义图用 `dgm_xxx`。
+   * 临时图不参与「更新图册」，只会在被显式创建/重画时进来。
    */
-  async start(project: Project, kind: RunKind, kinds: readonly DiagramKind[]): Promise<StartedRun> {
+  async start(project: Project, kind: RunKind, diagramIds: readonly string[]): Promise<StartedRun> {
     if (this.isBusy(project.id)) {
       throw new RunnerBusy(project.id)
     }
     const { store, config } = this.deps
+    const diagrams = diagramIds
+      .map((id) => findDiagram(project, id))
+      .filter((d): d is DiagramState => d !== undefined)
+    if (diagrams.length === 0) throw new RunnerUnavailable('没有可运行的图')
+
     const runId = newRunId()
     const startedAt = new Date().toISOString()
 
@@ -103,13 +131,14 @@ export class Runner {
       repoPath: project.repoPath,
       workspaceDir,
       git: project.git,
-      kinds,
+      diagrams: diagrams.map(toPromptDiagram),
+      concepts: project.concepts,
       stamp: stampOf(new Date()),
       archifySkillPath: skillDir,
-      previous: previousCommits(project),
+      previous: previousBranches(diagrams),
     })
 
-    const sessionId = await this.openSession(project, workspaceDir, prompt)
+    const sessionId = await this.openSession(workspaceDir, prompt, 'draw')
 
     const record: RunRecord = {
       id: runId,
@@ -120,21 +149,90 @@ export class Runner {
       finishedAt: null,
       error: null,
       note: null,
+      diagramIds: diagrams.map((d) => d.id),
     }
     await store.patch(project.id, (current) => ({
       ...current,
       updatedAt: startedAt,
       lastRun: record,
       runs: pushRun(current.runs, record, config.keepRuns),
-      diagrams: markStatus(current.diagrams, kinds, 'running'),
+      ...markStatuses(
+        current,
+        diagrams.map((d) => d.id),
+        'running',
+      ),
     }))
 
-    const tracked = this.follow(project.id, runId, kinds).finally(() => {
+    const tracked = this.follow(
+      project.id,
+      runId,
+      diagrams.map((d) => d.id),
+    ).finally(() => {
       this.busy.delete(project.id)
     })
     this.busy.set(project.id, tracked)
 
     return { runId, sessionId, kind }
+  }
+
+  /**
+   * 对一张图提问（只读会话）。
+   *
+   * 上下文只有三样：这张图的 prompt + 产物摘要、项目概念表、代码库根目录。
+   * 工具面是 read / glob / grep / skill(archify) —— 没有 shell、没有写工具。
+   */
+  async ask(project: Project, diagramId: string, question: string): Promise<AskResult> {
+    if (this.isBusy(project.id)) {
+      throw new RunnerBusy(project.id)
+    }
+    const { store, config } = this.deps
+    const diagram = findDiagram(project, diagramId)
+    if (diagram === undefined) throw new RunnerUnavailable('图不存在')
+
+    const workspaceDir = await ensureProjectWorkspace(config, project.id)
+    const candidate = await readCandidate(config, project, diagram)
+    const prompt = buildAskPrompt({
+      projectName: project.name,
+      repoPath: project.repoPath,
+      diagram: toPromptDiagram(diagram),
+      concepts: project.concepts,
+      candidate,
+      question,
+    })
+
+    const run = (async (): Promise<AskResult> => {
+      const sessionId = await this.openSession(workspaceDir, prompt, 'ask')
+      const agent = agentOf(this.deps.ctx, sessionId)
+      const text =
+        agent === undefined
+          ? ''
+          : await withTimeout(agent.whenIdle(), config.askTimeoutMs).then(() =>
+              readFinalText(agent),
+            )
+      const entry: QaEntry = {
+        id: `qa_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
+        diagramId: diagram.id,
+        question,
+        answer: text.length > 0 ? text : '（这次提问没有拿到回答：会话结束时没有 assistant 文本）',
+        at: new Date().toISOString(),
+        applied: false,
+      }
+      await store.patch(project.id, (current) => ({
+        ...current,
+        updatedAt: entry.at,
+        qa: [...current.qa, entry],
+      }))
+      return { sessionId, entry }
+    })()
+
+    const tracked = run
+      .then(() => undefined)
+      .catch(() => undefined)
+      .finally(() => {
+        this.busy.delete(project.id)
+      })
+    this.busy.set(project.id, tracked)
+    return run
   }
 
   /**
@@ -145,17 +243,17 @@ export class Runner {
    * 限制不会因为走哪条路而消失。
    */
   private async openSession(
-    project: Project,
     workspaceDir: string,
     prompt: string,
+    mode: 'draw' | 'ask',
   ): Promise<string | null> {
-    const { ctx, config, store } = this.deps
-    const allow = allowedToolNames()
+    const { ctx, config } = this.deps
+    const allow = mode === 'ask' ? readonlyToolNames() : allowedToolNames()
     const controller = serviceOf<SessionControllerLike>(ctx, 'sessionController')
     if (controller !== undefined) {
       const created = await controller.create({ cwd: workspaceDir, agentPreset: config.presetId })
       // 会话刚建好、还没开 turn：这时候收口工具面最干净
-      this.tighten(created.sessionId, allow)
+      this.tighten(created.sessionId, allow, mode)
       if (typeof controller.prompt === 'function') {
         await controller.prompt(
           {
@@ -188,21 +286,19 @@ export class Runner {
       reusable: () => false,
     })
     const agent = created.agent
-    this.tighten(agent.id ?? null, allow)
+    this.tighten(agent.id ?? null, allow, mode)
     agent.followup({
       id: newRequestId(),
       content: [{ type: 'text', text: prompt }],
       source: { kind: 'user' },
     } as never)
     const sessionId = (agent as unknown as { id?: string }).id ?? null
-    // 会话 id 拿不到就无法跟踪产物；把这次运行标成失败，别留一个永远「运行中」的记录
     if (sessionId === null) throw new RunnerUnavailable('用 agents.createSession 起的会话没有 id')
-    await store.patch(project.id, (current) => ({ ...current }))
     return sessionId
   }
 
   /** 对该会话的 agent 作用域装工具白名单与守卫。 */
-  private tighten(sessionId: string | null, allow: readonly string[]): void {
+  private tighten(sessionId: string | null, allow: readonly string[], mode: 'draw' | 'ask'): void {
     const { ctx } = this.deps
     const warn = (message: string): void => {
       try {
@@ -215,18 +311,20 @@ export class Runner {
       warn('会话没有 id：跳过工具收口')
       return
     }
-    const agent = serviceOf<{ get(id: string): AgentLike | undefined }>(ctx, 'agents')?.get(
-      sessionId,
-    )
+    const agent = agentOf(ctx, sessionId)
     if (agent?.ctx === undefined) {
       warn('拿不到 agent 作用域：工具白名单未生效（守卫同样未生效）')
+      return
+    }
+    if (mode === 'ask') {
+      tightenReadOnlyAgent(agent.ctx, warn)
       return
     }
     tightenAgent(agent.ctx, allow, warn)
   }
 
-  /** 后台等待结束并回收产物。 */
-  private follow(projectId: string, runId: string, kinds: readonly DiagramKind[]): Promise<void> {
+  /** 后台等待结束并回收产物/概念。 */
+  private follow(projectId: string, runId: string, diagramIds: readonly string[]): Promise<void> {
     const run = async (): Promise<void> => {
       const { ctx, store, config } = this.deps
       const project = await store.get(projectId)
@@ -237,15 +335,14 @@ export class Runner {
         return
       }
       try {
-        const agent = serviceOf<{ get(id: string): AgentLike | undefined }>(ctx, 'agents')?.get(
-          sessionId,
-        )
+        const agent = agentOf(ctx, sessionId)
         if (agent === undefined) throw new RunnerUnavailable('会话已不在运行中，无法等待结果')
         await withTimeout(agent.whenIdle(), config.runTimeoutMs)
         const text = readFinalText(agent)
         const markers = parseArtifactMarkers(text)
-        const found = await this.collectArtifacts(projectId, markers, kinds)
-        await this.succeed(projectId, runId, found, kinds)
+        const found = await this.collectArtifacts(projectId, markers, diagramIds)
+        const concepts = await readConcepts(config, projectId)
+        await this.succeed(projectId, runId, found, diagramIds, concepts)
       } catch (err) {
         await this.fail(projectId, runId, err instanceof Error ? err.message : String(err))
       }
@@ -256,23 +353,23 @@ export class Runner {
   /** 回收产物：标记优先，找不到就扫 `.archify/` 最新目录。 */
   private async collectArtifacts(
     projectId: string,
-    markers: Partial<Record<DiagramKind, string>>,
-    kinds: readonly DiagramKind[],
-  ): Promise<Map<DiagramKind, string>> {
-    const found = new Map<DiagramKind, string>()
-    for (const kind of kinds) {
-      const marked = markers[kind]
+    markers: Map<string, string>,
+    diagramIds: readonly string[],
+  ): Promise<Map<string, string>> {
+    const found = new Map<string, string>()
+    for (const id of diagramIds) {
+      const marked = markers.get(id.toLowerCase()) ?? markers.get(legacyMarkerId(id).toLowerCase())
       if (marked !== undefined && (await isFile(marked))) {
-        found.set(kind, path.resolve(marked))
+        found.set(id, path.resolve(marked))
       }
     }
-    if (found.size === kinds.length) return found
+    if (found.size === diagramIds.length) return found
 
-    const fallback = await discoverArtifacts(this.deps.config, projectId)
-    for (const kind of kinds) {
-      if (found.has(kind)) continue
-      const candidate = fallback.get(kind)
-      if (candidate !== undefined) found.set(kind, candidate)
+    const fallback = await discoverArtifacts(this.deps.config, projectId, diagramIds)
+    for (const id of diagramIds) {
+      if (found.has(id)) continue
+      const candidate = fallback.get(id)
+      if (candidate !== undefined) found.set(id, candidate)
     }
     return found
   }
@@ -280,35 +377,38 @@ export class Runner {
   private async succeed(
     projectId: string,
     runId: string,
-    found: Map<DiagramKind, string>,
-    kinds: readonly DiagramKind[],
+    found: Map<string, string>,
+    diagramIds: readonly string[],
+    concepts: readonly Concept[],
   ): Promise<void> {
     const { store, config } = this.deps
     const now = new Date().toISOString()
     const root = workspaceRoot(config)
     await store.patch(projectId, (current) => {
-      const diagrams = { ...current.diagrams }
-      for (const kind of kinds) {
-        const html = found.get(kind)
-        diagrams[kind] =
+      let next: Project = { ...current, concepts: mergeConcepts(current.concepts, concepts) }
+      for (const id of diagramIds) {
+        const diagram = findDiagram(next, id)
+        if (diagram === undefined) continue
+        const html = found.get(id)
+        const updated =
           html === undefined
-            ? failedState('没有找到这次运行的产物文件')
-            : readyState(html, root, current, now)
+            ? failedDiagram(diagram, '没有找到这次运行的产物文件')
+            : readyDiagram(diagram, html, root, next, now)
+        next = { ...next, ...replaceDiagram(next, diagram, updated) }
       }
       const lastRun = finishRun(
-        current,
+        next,
         runId,
         now,
-        found.size === kinds.length
+        found.size === diagramIds.length
           ? { status: 'succeeded', error: null }
           : { status: 'failed', error: '部分图谱没有产出' },
       )
       return {
-        ...current,
+        ...next,
         updatedAt: now,
-        diagrams,
         lastRun,
-        runs: pushRun(current.runs, lastRun, config.keepRuns),
+        runs: pushRun(next.runs, lastRun, config.keepRuns),
       }
     })
   }
@@ -318,28 +418,34 @@ export class Runner {
     const now = new Date().toISOString()
     // 失败路径也要先看盘：agent 常常已经把自检通过的 HTML 落进 `.archify/`，
     // 报错只是「等不到最终回复」（会话被宿主机重启掐断、超时、连接断）。
-    // 这种情况下把已有产物认下来，比留一张「失败」有用得多。
-    const salvaged = await discoverArtifacts(config, projectId).catch(
-      () => new Map<DiagramKind, string>(),
-    )
+    const salvaged = await discoverArtifacts(
+      config,
+      projectId,
+      (await store.get(projectId))?.custom.map((d) => d.id) ?? [],
+    ).catch(() => new Map<string, string>())
     const root = workspaceRoot(config)
     await store.patch(projectId, (current) => {
-      const diagrams = { ...current.diagrams }
-      for (const kind of DIAGRAM_KINDS) {
-        if (diagrams[kind].status !== 'running' && diagrams[kind].status !== 'queued') continue
-        const html = salvaged.get(kind)
-        diagrams[kind] =
-          html === undefined
-            ? { ...diagrams[kind], status: 'failed', error: message }
-            : readyState(html, root, current, now)
+      let next: Project = current
+      for (const diagram of allDiagrams(current)) {
+        if (diagram.status !== 'running' && diagram.status !== 'queued') continue
+        const html = salvaged.get(diagram.id) ?? salvaged.get(legacyMarkerId(diagram.id))
+        next = {
+          ...next,
+          ...replaceDiagram(
+            next,
+            diagram,
+            html === undefined
+              ? failedDiagram(diagram, message)
+              : readyDiagram(diagram, html, root, next, now),
+          ),
+        }
       }
-      const lastRun = finishRun(current, runId, now, { status: 'failed', error: message })
+      const lastRun = finishRun(next, runId, now, { status: 'failed', error: message })
       return {
-        ...current,
+        ...next,
         updatedAt: now,
-        diagrams,
         lastRun,
-        runs: pushRun(current.runs, lastRun, config.keepRuns),
+        runs: pushRun(next.runs, lastRun, config.keepRuns),
       }
     })
   }
@@ -391,6 +497,7 @@ function finishRun(
       finishedAt: null,
       error: null,
       note: null,
+      diagramIds: [],
     }
   return { ...base, status: outcome.status, finishedAt: now, error: outcome.error }
 }
@@ -403,27 +510,64 @@ function stampOf(date: Date): string {
   )
 }
 
-function previousCommits(project: Project): Partial<Record<DiagramKind, string | null>> {
+function toPromptDiagram(diagram: DiagramState): PromptDiagram {
   return {
-    structure: project.diagrams.structure.commit,
-    domain: project.diagrams.domain.commit,
+    id: diagram.id,
+    kind: diagram.kind,
+    title: diagram.title,
+    prompt: diagram.prompt,
+    persistence: diagram.persistence,
+    conceptIds: diagram.conceptIds,
   }
 }
 
-function markStatus(
-  diagrams: Readonly<Record<DiagramKind, DiagramState>>,
-  kinds: readonly DiagramKind[],
+function previousBranches(
+  diagrams: readonly DiagramState[],
+): Readonly<Record<string, string | null>> {
+  const out: Record<string, string | null> = {}
+  for (const diagram of diagrams) out[diagram.id] = diagram.branch
+  return out
+}
+
+/** 旧版本标记（structure/domain）与默认图 id 是同一个，这里只是留个可读入口。 */
+function legacyMarkerId(id: string): string {
+  return id
+}
+
+function agentOf(ctx: HostContext, sessionId: string | null): AgentLike | undefined {
+  if (sessionId === null) return undefined
+  return serviceOf<{ get(id: string): AgentLike | undefined }>(ctx, 'agents')?.get(sessionId)
+}
+
+/** 把图替换回项目，同时保持 record/数组两条路径。 */
+function replaceDiagram(
+  project: Project,
+  current: DiagramState,
+  next: DiagramState,
+): Partial<Project> {
+  if ((DIAGRAM_KINDS as readonly string[]).includes(current.kind)) {
+    return { diagrams: { ...project.diagrams, [current.kind as DiagramKind]: next } }
+  }
+  return { custom: project.custom.map((d) => (d.id === current.id ? next : d)) }
+}
+
+function markStatuses(
+  project: Project,
+  ids: readonly string[],
   status: DiagramState['status'],
-): Record<DiagramKind, DiagramState> {
-  const next: Record<DiagramKind, DiagramState> = { ...diagrams }
-  for (const kind of kinds) {
-    const current = next[kind]
-    next[kind] = { ...current, status, error: null }
+): Partial<Project> {
+  let next: Project = project
+  for (const id of ids) {
+    const diagram = findDiagram(next, id)
+    if (diagram === undefined) continue
+    next = { ...next, ...replaceDiagram(next, diagram, { ...diagram, status, error: null }) }
   }
-  return next
+  return { diagrams: next.diagrams, custom: next.custom }
 }
 
-export function readyState(
+/** 产物就绪：保留图的元信息，只换产物字段。 */
+export function readyDiagram(
+  diagram: DiagramState,
   htmlPath: string,
   root: string,
   project: Project,
@@ -431,24 +575,26 @@ export function readyState(
 ): DiagramState {
   const specPath = path.join(path.dirname(htmlPath), 'candidate.json')
   return {
+    ...diagram,
     status: 'ready',
     htmlPath: relativeTo(root, htmlPath),
     specPath: relativeTo(root, specPath),
     generatedAt: now,
     branch: project.git.branch,
-    commit: project.git.commit,
+    tree: project.git.tree,
     error: null,
   }
 }
 
-function failedState(message: string): DiagramState {
+function failedDiagram(diagram: DiagramState, message: string): DiagramState {
   return {
+    ...diagram,
     status: 'failed',
     htmlPath: null,
     specPath: null,
     generatedAt: null,
     branch: null,
-    commit: null,
+    tree: null,
     error: message,
   }
 }
@@ -491,6 +637,79 @@ function readFinalText(agent: AgentLike): string {
   return ''
 }
 
+/** 读 agent 写下的概念表（工作目录根的 concepts.json）。 */
+export async function readConcepts(
+  config: ResolvedConfig,
+  projectId: string,
+): Promise<readonly Concept[]> {
+  const file = path.join(projectDir(config, projectId), 'concepts.json')
+  let text: string
+  try {
+    text = await readFile(file, 'utf8')
+  } catch {
+    return []
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(text)
+  } catch {
+    return []
+  }
+  const list = Array.isArray(parsed) ? parsed : ((parsed as { concepts?: unknown }).concepts ?? [])
+  if (!Array.isArray(list)) return []
+  const now = new Date().toISOString()
+  const out: Concept[] = []
+  for (const item of list) {
+    if (typeof item !== 'object' || item === null) continue
+    const raw = item as Record<string, unknown>
+    const id = typeof raw.id === 'string' ? raw.id : null
+    const name = typeof raw.name === 'string' ? raw.name : null
+    if (id === null || name === null) continue
+    out.push({
+      id,
+      name,
+      summary: typeof raw.summary === 'string' ? raw.summary : '',
+      evidence: Array.isArray(raw.evidence)
+        ? raw.evidence.filter((v): v is string => typeof v === 'string')
+        : [],
+      tags: Array.isArray(raw.tags)
+        ? raw.tags.filter((v): v is string => typeof v === 'string')
+        : [],
+      updatedAt: typeof raw.updatedAt === 'string' ? raw.updatedAt : now,
+    })
+  }
+  return out
+}
+
+/** 合并概念：同 id 覆盖，其余保留；按出现顺序去重。 */
+export function mergeConcepts(
+  existing: readonly Concept[],
+  incoming: readonly Concept[],
+): readonly Concept[] {
+  if (incoming.length === 0) return existing
+  const byId = new Map<string, Concept>()
+  for (const concept of existing) byId.set(concept.id, concept)
+  for (const concept of incoming) byId.set(concept.id, concept)
+  return [...byId.values()]
+}
+
+/** 读这张图的 candidate.json（截断），给问答会话当上下文。 */
+async function readCandidate(
+  config: ResolvedConfig,
+  project: Project,
+  diagram: DiagramState,
+): Promise<string | null> {
+  void project
+  if (diagram.specPath === null) return null
+  const file = path.join(workspaceRoot(config), diagram.specPath)
+  try {
+    const text = await readFile(file, 'utf8')
+    return text.length > 6000 ? `${text.slice(0, 6000)}\n…（已截断）` : text
+  } catch {
+    return null
+  }
+}
+
 /**
  * 开库对账。宿主每次启动跑一次，做两件事：
  *
@@ -498,7 +717,6 @@ function readFinalText(agent: AgentLike): string {
  *    （agent 跑到一半宿主被重启 / 页面被关的典型现场），把它认回来当 ready。
  * 2. **收尸悬挂的运行**：上一次运行的 `running` 会原样留在台账里（进程被 kill 时
  *    没有机会写 finishedAt）。不收拾就会永远「生成中」，按钮全禁用，用户只能手改 JSON。
- *    这里把它标成 failed，并说明代价只是重跑一次；能认领的产物照旧认领。
  */
 export async function reconcileArtifacts(
   store: ProjectStore,
@@ -513,29 +731,42 @@ export async function reconcileArtifacts(
     return adopted
   }
   for (const project of projects) {
+    const diagrams = allDiagrams(project)
     const strayRuns = project.runs.filter((run) => run.status === 'running')
-    const missing = DIAGRAM_KINDS.filter((kind) => project.diagrams[kind].status !== 'ready')
+    const missing = diagrams.filter((diagram) => diagram.status !== 'ready')
     if (missing.length === 0 && strayRuns.length === 0) continue
 
-    const found = await discoverArtifacts(config, project.id).catch(
-      () => new Map<DiagramKind, string>(),
+    const found = await discoverArtifacts(
+      config,
+      project.id,
+      diagrams.map((d) => d.id),
+    ).catch(() => new Map<string, string>())
+    const strayDiagrams = diagrams.filter(
+      (diagram) => diagram.status === 'queued' || diagram.status === 'running',
     )
-    const strayDiagrams = DIAGRAM_KINDS.filter((kind) => {
-      const status = project.diagrams[kind].status
-      return status === 'queued' || status === 'running'
-    })
     if (found.size === 0 && strayRuns.length === 0 && strayDiagrams.length === 0) continue
 
     const now = new Date().toISOString()
     await store.patch(project.id, (current) => {
-      const diagrams = { ...current.diagrams }
-      for (const [kind, html] of found) diagrams[kind] = readyState(html, root, current, now)
-
-      // 认领完还停在 queued / running 的：产物没有，就是那次运行被中断了。
-      for (const kind of DIAGRAM_KINDS) {
-        const status = diagrams[kind].status
-        if (status !== 'queued' && status !== 'running') continue
-        diagrams[kind] = failedState('上一次运行随宿主退出而中断，点「重新生成」重跑')
+      let next: Project = current
+      for (const diagram of allDiagrams(current)) {
+        const html = found.get(diagram.id)
+        if (html !== undefined) {
+          next = {
+            ...next,
+            ...replaceDiagram(next, diagram, readyDiagram(diagram, html, root, next, now)),
+          }
+          continue
+        }
+        if (diagram.status !== 'queued' && diagram.status !== 'running') continue
+        next = {
+          ...next,
+          ...replaceDiagram(
+            next,
+            diagram,
+            failedDiagram(diagram, '上一次运行随宿主退出而中断，点「重新生成」重跑'),
+          ),
+        }
       }
 
       const runs = current.runs.map((run) =>
@@ -553,25 +784,27 @@ export async function reconcileArtifacts(
             }
           : current.lastRun
 
-      return { ...current, updatedAt: now, diagrams, runs, lastRun }
+      return { ...next, updatedAt: now, runs, lastRun }
     })
 
-    if (found.size > 0) adopted.push(`${project.name}: ${[...found.keys()].join('+')}`)
+    if (found.size > 0) adopted.push(`${project.name}: 认领 ${found.size} 张图`)
     if (strayRuns.length > 0) adopted.push(`${project.name}: 收尸 ${strayRuns.length} 条悬挂运行`)
   }
   return adopted
 }
 
 /**
- * 目录兜底：扫 `<项目目录>/.archify/` 下的子目录，按目录名里的 kind 关键词归类。
+ * 目录兜底：扫 `<项目目录>/.archify/` 下的子目录，按目录名里的图 id / 旧 kind 关键词归类。
  *
- * 只在标记缺失时用。名字里没关键词时按「新目录优先」补位，宁可给错一张也不留空白。
+ * 只在标记缺失时用。目录名必须以图 id 开头（prompt 里约定的），否则按旧版
+ * `structure-` / `domain-` 前缀兜底。
  */
 export async function discoverArtifacts(
   config: ResolvedConfig,
   projectId: string,
-): Promise<Map<DiagramKind, string>> {
-  const result = new Map<DiagramKind, string>()
+  diagramIds: readonly string[],
+): Promise<Map<string, string>> {
+  const result = new Map<string, string>()
   const archifyRoot = path.join(projectDir(config, projectId), '.archify')
   let dirs: string[]
   try {
@@ -587,17 +820,19 @@ export async function discoverArtifacts(
   }
 
   for (const dir of dirs) {
-    const full = path.join(archifyRoot, dir)
-    const kind = kindOfDirName(dir)
-    if (kind === null || result.has(kind)) continue
-    const html = await firstHtmlIn(full)
-    if (html !== null) result.set(kind, html)
+    const id = diagramIdOfDirName(dir, diagramIds)
+    if (id === null || result.has(id)) continue
+    const html = await firstHtmlIn(path.join(archifyRoot, dir))
+    if (html !== null) result.set(id, html)
   }
   return result
 }
 
-function kindOfDirName(dir: string): DiagramKind | null {
+function diagramIdOfDirName(dir: string, diagramIds: readonly string[]): string | null {
   const lower = dir.toLowerCase()
+  for (const id of diagramIds) {
+    if (lower.startsWith(`${id.toLowerCase()}-`)) return id
+  }
   if (lower.startsWith('domain')) return 'domain'
   if (lower.startsWith('structure') || lower.startsWith('architecture')) return 'structure'
   return null
@@ -630,4 +865,9 @@ export function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
       },
     )
   })
+}
+
+/** 供测试使用：把树状态签名摆出来，别在测试里手抄格式。 */
+export function treeOf(tree: TreeState | null): string {
+  return tree === null ? 'none' : `${tree.staged}:${tree.unstaged}:${tree.untracked}`
 }

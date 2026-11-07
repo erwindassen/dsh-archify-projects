@@ -5,7 +5,7 @@
  * 所以不能碰 Date.now() —— 当前时间一律由调用方传入，测试才能确定性。
  */
 
-import type { DiagramKind, GitSnapshot, Project } from './types.js'
+import { allDiagrams, type DiagramKind, type GitSnapshot, type Project } from './types.js'
 
 /** 空值占位符，页面统一用它，避免各处出现 '' / '-' / '—' 三种。 */
 export const PLACEHOLDER = '—'
@@ -104,7 +104,8 @@ export function diagramTitle(kind: DiagramKind): string {
 
 /** 两张图里最新的生成时间（用于「上次分析」）。 */
 export function latestGeneratedAt(project: Project): string | null {
-  const stamps = [project.diagrams.structure.generatedAt, project.diagrams.domain.generatedAt]
+  const stamps = allDiagrams(project)
+    .map((diagram) => diagram.generatedAt)
     .filter((v): v is string => v !== null)
     .sort()
   return stamps.length > 0 ? (stamps[stamps.length - 1] as string) : null

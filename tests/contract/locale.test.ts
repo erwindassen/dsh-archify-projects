@@ -35,14 +35,18 @@ describe('客户端字典', () => {
     }
   })
 
-  test('页面用到的模板变量都在（{time} / {n} / {message} / {commit}）', () => {
+  test('页面用到的模板变量都在（{time} / {n} / {message} / {staged}）', () => {
     for (const key of ['git.checkedAt', 'meta.createdAt', 'meta.generatedAt']) {
       expect(DICT.zh[key]).toContain('{time}')
       expect(DICT.en[key]).toContain('{time}')
     }
     expect(DICT.zh['error.generic']).toContain('{message}')
     expect(DICT.en['time.minutes']).toContain('{n}')
-    expect(DICT.zh['meta.basedOn']).toContain('{commit}')
+    for (const key of ['git.tree']) {
+      expect(DICT.zh[key]).toContain('{staged}')
+      expect(DICT.en[key]).toContain('{staged}')
+      expect(DICT.zh[key]).toContain('{untracked}')
+    }
   })
 
   test('状态键覆盖 DiagramState 的全部取值', () => {

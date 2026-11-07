@@ -26,7 +26,7 @@ import {
   withDiagram,
   type Project,
 } from '../../src/shared/types.js'
-import { buildRunPrompt, parseArtifactMarkers } from '../../src/shared/prompt.js'
+import { buildAskPrompt, buildRunPrompt, parseArtifactMarkers } from '../../src/shared/prompt.js'
 
 describe('format', () => {
   test('shortCommit 截七位，空值给占位符', () => {
@@ -133,76 +133,96 @@ describe('types', () => {
     expect(isRunning(busy, Date.parse(now) + 60_000)).toBe(true)
   })
 
-  test('isStale 只在已就绪且提交不同时为真', () => {
-    const git = { ...emptyGitSnapshot(now), isRepo: true, branch: 'main', commit: 'aaa' }
+  test('isStale 看分支与工作区，不看 commit', () => {
+    const tree = { staged: 0, unstaged: 0, untracked: 0 }
+    const git = { ...emptyGitSnapshot(now), isRepo: true, branch: 'main', commit: 'aaa', tree }
     const project = createProject({ id: 'p', name: 'n', repoPath: 'D:/r', now, git })
     expect(isStale(project)).toBe(false)
-    const ready = withDiagram(project, 'structure', {
+    const ready = withDiagram(project, {
+      ...project.diagrams.structure,
       status: 'ready',
       htmlPath: 'a.html',
       specPath: 'a.json',
       generatedAt: now,
       branch: 'main',
-      commit: 'aaa',
-      error: null,
+      tree,
     })
     expect(isStale(ready)).toBe(false)
-    const newer = { ...ready, git: { ...ready.git, commit: 'bbb' } }
-    expect(isStale(newer)).toBe(true)
+    const branchChanged = { ...ready, git: { ...ready.git, branch: 'dev' } }
+    expect(isStale(branchChanged)).toBe(true)
+    const treeChanged = {
+      ...ready,
+      git: { ...ready.git, tree: { staged: 1, unstaged: 0, untracked: 0 } },
+    }
+    expect(isStale(treeChanged)).toBe(true)
+    // 只是新 commit、分支与工作区都没变 -> 不算过期（v2 的版本键不看 commit）
+    const commitMoved = { ...ready, git: { ...ready.git, commit: 'bbb' } }
+    expect(isStale(commitMoved)).toBe(false)
   })
 })
 
 describe('prompt', () => {
-  const kinds = ['structure', 'domain'] as const
+  const diagram = (
+    id: string,
+    kind: 'structure' | 'domain' | 'custom',
+    prompt: string | null = null,
+  ) => ({ id, kind, title: id, prompt, persistence: 'permanent' as const, conceptIds: [] })
+
+  const base = {
+    projectName: 'Demo',
+    repoPath: 'D:/repo',
+    workspaceDir: 'C:/ws/demo',
+    stamp: '20261106-130509',
+    archifySkillPath: 'C:/skills/archify',
+    concepts: [],
+    previous: {},
+  }
 
   test('提示词自包含：环境事实、两类图谱口径、产物标记都在', () => {
     const text = buildRunPrompt({
-      projectName: 'Demo',
-      repoPath: 'D:/repo',
-      workspaceDir: 'C:/ws/demo',
+      ...base,
       git: {
         ...emptyGitSnapshot('2026-11-06T12:00:00Z'),
         isRepo: true,
         branch: 'main',
         commit: 'abcdef1234',
       },
-      kinds,
-      stamp: '20261106-130509',
-      archifySkillPath: 'C:/skills/archify',
-      previous: { structure: null, domain: null },
+      diagrams: [diagram('structure', 'structure'), diagram('domain', 'domain')],
     })
     expect(text).toContain('D:/repo')
     expect(text).toContain('C:/ws/demo')
     expect(text).toContain('main')
-    expect(text).toContain('abcdef1')
     expect(text).toContain('C:/skills/archify')
     expect(text).toContain('ARCHIFY_ARTIFACT structure')
     expect(text).toContain('ARCHIFY_ARTIFACT domain')
-    // 只跑一张图时不该要求另一张
+    expect(text).toContain('concepts.json')
+
     const onlyDomain = buildRunPrompt({
-      projectName: 'Demo',
-      repoPath: 'D:/repo',
-      workspaceDir: 'C:/ws/demo',
+      ...base,
       git: emptyGitSnapshot('2026-11-06T12:00:00Z'),
-      kinds: ['domain'],
-      stamp: '20261106-130509',
       archifySkillPath: null,
-      previous: { structure: null, domain: null },
+      diagrams: [diagram('domain', 'domain')],
     })
     expect(onlyDomain).not.toContain('ARCHIFY_ARTIFACT structure')
     expect(onlyDomain).toContain('ARCHIFY_ARTIFACT domain')
   })
 
+  test('自定义图会把自己的 prompt 原样带进去', () => {
+    const text = buildRunPrompt({
+      ...base,
+      git: emptyGitSnapshot('2026-11-06T12:00:00Z'),
+      diagrams: [diagram('dgm_trace', 'custom', '画出一次更新的调用链，标出失败分支')],
+    })
+    expect(text).toContain('画出一次更新的调用链，标出失败分支')
+    expect(text).toContain('ARCHIFY_ARTIFACT dgm_trace')
+  })
+
   test('skill 缺失时降级说明出现，而不是空口让人去调 skill', () => {
     const text = buildRunPrompt({
-      projectName: 'Demo',
-      repoPath: 'D:/repo',
-      workspaceDir: 'C:/ws/demo',
+      ...base,
       git: emptyGitSnapshot('2026-11-06T12:00:00Z'),
-      kinds,
-      stamp: '20261106-130509',
       archifySkillPath: null,
-      previous: { structure: null, domain: null },
+      diagrams: [diagram('structure', 'structure'), diagram('domain', 'domain')],
     })
     expect(text).toContain('skill')
     expect(text.toLowerCase()).toContain('.archify')
@@ -210,14 +230,9 @@ describe('prompt', () => {
 
   test('非 Git 目录不再要求切分支', () => {
     const text = buildRunPrompt({
-      projectName: 'Demo',
-      repoPath: 'D:/repo',
-      workspaceDir: 'C:/ws/demo',
+      ...base,
       git: emptyGitSnapshot('2026-11-06T12:00:00Z'),
-      kinds,
-      stamp: '20261106-130509',
-      archifySkillPath: 'C:/skills/archify',
-      previous: { structure: null, domain: null },
+      diagrams: [diagram('structure', 'structure')],
     })
     expect(text).toContain('不是 Git 仓库')
   })
@@ -231,31 +246,81 @@ describe('prompt', () => {
       'ARCHIFY_ARTIFACT structure `C:/ws/demo/.archify/structure-c/z.html`',
     ].join('\n')
     const markers = parseArtifactMarkers(text)
-    expect(markers.domain).toBe('C:/ws/demo/.archify/domain-b/y.html')
-    expect(markers.structure).toBe('C:/ws/demo/.archify/structure-c/z.html')
+    expect(markers.get('domain')).toBe('C:/ws/demo/.archify/domain-b/y.html')
+    expect(markers.get('structure')).toBe('C:/ws/demo/.archify/structure-c/z.html')
   })
 
-  test('parseArtifactMarkers 忽略行内提及与未知类型', () => {
-    const text = [
-      '我会把结果写进 ARCHIFY_ARTIFACT 行。',
-      'ARCHIFY_ARTIFACT erd C:/x/y.html',
-      'ARCHIFY_ARTIFACT structure',
-    ].join('\n')
-    expect(parseArtifactMarkers(text)).toEqual({})
+  test('parseArtifactMarkers 忽略行内提及与缺路径', () => {
+    const text = ['我会把结果写进 ARCHIFY_ARTIFACT 行。', 'ARCHIFY_ARTIFACT structure'].join('\n')
+    expect(parseArtifactMarkers(text).size).toBe(0)
   })
-})
 
-describe('prompt：Git 事实块与旧产物提示', () => {
-  const base = {
-    projectName: 'Demo',
-    repoPath: 'D:/repo',
-    workspaceDir: 'C:/ws/demo',
-    kinds: ['structure', 'domain'] as const,
-    stamp: '20261106-130509',
-    archifySkillPath: 'C:/skills/archify',
-  }
+  test('已有概念会进提示词，让 agent 复用而不是重造', () => {
+    const text = buildRunPrompt({
+      ...base,
+      git: emptyGitSnapshot('2026-11-06T12:00:00Z'),
+      diagrams: [diagram('structure', 'structure')],
+      concepts: [
+        {
+          id: 'cpt_ledger',
+          name: '项目台账',
+          summary: 'projects.json 是唯一真相',
+          evidence: ['src/host/store.ts'],
+          tags: [],
+          updatedAt: '2026-11-06T00:00:00.000Z',
+        },
+      ],
+    })
+    expect(text).toContain('cpt_ledger')
+    expect(text).toContain('项目台账')
+    expect(text).toContain('src/host/store.ts')
+  })
 
-  test('完整事实块：提交信息、时间、上游、脏工作区、detached', () => {
+  test('问答提示词：只给这张图、概念与代码库，并要求建议补图', () => {
+    const text = buildAskPrompt({
+      projectName: 'Demo',
+      repoPath: '/work/demo',
+      diagram: { ...diagram('structure', 'structure'), conceptIds: ['cpt_a'] },
+      concepts: [
+        {
+          id: 'cpt_a',
+          name: '台账',
+          summary: '唯一真相',
+          evidence: ['src/store.ts'],
+          tags: [],
+          updatedAt: '2026-11-06T00:00:00.000Z',
+        },
+      ],
+      candidate: '{"nodes":[]}',
+      question: '路由注册失败会怎样？',
+    })
+    expect(text).toContain('/work/demo')
+    expect(text).toContain('路由注册失败会怎样？')
+    expect(text).toContain('cpt_a')
+    expect(text).toContain('建议补进图里的节点/关系')
+    expect(text).toContain('{"nodes":[]}')
+  })
+
+  test('问答提示词：没有 candidate 与概念时给明确兜底', () => {
+    const text = buildAskPrompt({
+      projectName: 'Demo',
+      repoPath: '/work/demo',
+      diagram: diagram('dgm_x', 'custom', '画出调用链'),
+      concepts: [],
+      candidate: null,
+      question: '超时怎么算？',
+    })
+    expect(text).toContain('没有读到 candidate.json')
+    expect(text).toContain('画出调用链')
+    expect(text).toContain('项目概念表')
+  })
+
+  test('自定义图的标记也能解析', () => {
+    const markers = parseArtifactMarkers('ARCHIFY_ARTIFACT dgm_trace C:/ws/x.html')
+    expect(markers.get('dgm_trace')).toBe('C:/ws/x.html')
+  })
+
+  test('Git 事实块：detached 与工作区计数', () => {
     const text = buildRunPrompt({
       ...base,
       git: {
@@ -263,39 +328,56 @@ describe('prompt：Git 事实块与旧产物提示', () => {
         isRepo: true,
         branch: null,
         detached: true,
-        commit: 'abcdef1',
-        commitFull: 'abcdef1234567890',
-        commitSubject: 'feat: 初始化',
-        commitTime: '2026-11-06T10:00:00+08:00',
-        upstream: 'origin/main',
         dirty: true,
+        tree: { staged: 2, unstaged: 1, untracked: 3 },
       },
-      previous: { structure: 'abcdef1', domain: null },
+      diagrams: [diagram('structure', 'structure')],
+      previous: { structure: 'dev' },
     })
     expect(text).toContain('detached HEAD')
-    expect(text).toContain('feat: 初始化')
-    expect(text).toContain('2026-11-06T10:00:00+08:00')
-    expect(text).toContain('origin/main')
-    expect(text).toContain('未提交改动')
-    // 有旧产物的那张要提示重新取证，没有的说没生成过
-    expect(text).toContain('上一版基于提交 `abcdef1`')
-    expect(text).toContain('这张图以前没生成过')
+    expect(text).toContain('暂存 2')
+    expect(text).toContain('未暂存 1')
+    expect(text).toContain('上一版生成于分支 `dev`')
   })
 
-  test('提交信息/时间/上游缺失时不写占位行', () => {
+  test('没有 tree 明细但 dirty=true 时仍要提醒以工作区为准', () => {
     const text = buildRunPrompt({
       ...base,
       git: {
         ...emptyGitSnapshot('2026-11-06T12:00:00Z'),
         isRepo: true,
         branch: 'main',
-        commit: 'abcdef1',
+        dirty: true,
       },
-      previous: {},
+      diagrams: [diagram('structure', 'structure')],
+    })
+    expect(text).toContain('未提交改动')
+    expect(text).toContain('以工作区当前内容为准')
+  })
+
+  test('自定义图没给 prompt 时要求按最重要的结构画', () => {
+    const text = buildRunPrompt({
+      ...base,
+      git: emptyGitSnapshot('2026-11-06T12:00:00Z'),
+      diagrams: [diagram('dgm_free', 'custom', null)],
+    })
+    expect(text).toContain('没有给 prompt')
+  })
+
+  test('干净工作区不写改动行', () => {
+    const text = buildRunPrompt({
+      ...base,
+      git: {
+        ...emptyGitSnapshot('2026-11-06T12:00:00Z'),
+        isRepo: true,
+        branch: 'main',
+        tree: { staged: 0, unstaged: 0, untracked: 0 },
+      },
+      diagrams: [diagram('structure', 'structure')],
     })
     expect(text).toContain('- 分支：main')
-    expect(text).not.toContain('- 提交信息：')
-    expect(text).not.toContain('- 上游：')
+    expect(text).toContain('工作区干净')
+    expect(text).not.toContain('提交信息')
   })
 })
 

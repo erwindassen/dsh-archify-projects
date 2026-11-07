@@ -14,6 +14,7 @@ export interface RawPluginConfig {
   readonly presetId?: unknown
   readonly archifySkillDir?: unknown
   readonly runTimeoutMs?: unknown
+  readonly askTimeoutMs?: unknown
   readonly keepRuns?: unknown
 }
 
@@ -27,6 +28,8 @@ export interface ResolvedConfig {
   readonly archifySkillDir: string | null
   /** 单次 agent 运行的超时（毫秒）。 */
   readonly runTimeoutMs: number
+  /** 单次提问会话的超时（毫秒）。 */
+  readonly askTimeoutMs: number
   /** 每个项目保留的运行记录条数。 */
   readonly keepRuns: number
 }
@@ -63,6 +66,7 @@ export function resolveConfig(
     presetId,
     archifySkillDir,
     runTimeoutMs: readPositiveInt(raw?.runTimeoutMs, 20 * 60 * 1000, 'runTimeoutMs', warnings),
+    askTimeoutMs: readPositiveInt(raw?.askTimeoutMs, 6 * 60 * 1000, 'askTimeoutMs', warnings),
     keepRuns: readPositiveInt(raw?.keepRuns, 20, 'keepRuns', warnings),
   }
 }

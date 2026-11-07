@@ -11,7 +11,7 @@
  */
 
 import { execFile } from 'node:child_process'
-import { emptyGitSnapshot, type GitSnapshot } from '../shared/types.js'
+import { emptyGitSnapshot, type GitSnapshot, type TreeState } from '../shared/types.js'
 
 /** 单条命令的结果。 */
 export interface GitResult {
@@ -105,6 +105,7 @@ export async function probeGit(
     }
   }
 
+  const tree = statusRes.code === 0 ? parseTree(statusRes.stdout) : null
   const dirty = statusRes.code === 0 ? statusRes.stdout.trim().length > 0 : null
 
   return {
@@ -120,9 +121,33 @@ export async function probeGit(
     ahead,
     behind,
     dirty,
+    tree,
     remoteUrl: remoteRes.code === 0 ? emptyToNull(remoteRes.stdout) : null,
     checkedAt: now,
   }
+}
+
+/**
+ * 解析 `git status --porcelain` 的 XY 两列：
+ *   - X = 暂存区状态，Y = 工作区状态；`??` 是未跟踪；
+ *   - 只看计数，不看文件名（页面只需要「有改动 / 几处」）。
+ */
+export function parseTree(stdout: string): TreeState {
+  let staged = 0
+  let unstaged = 0
+  let untracked = 0
+  for (const line of stdout.split(/\r?\n/)) {
+    if (line.trim().length === 0) continue
+    const x = line[0] ?? ' '
+    const y = line[1] ?? ' '
+    if (x === '?' && y === '?') {
+      untracked += 1
+      continue
+    }
+    if (x !== ' ' && x !== '?') staged += 1
+    if (y !== ' ' && y !== '?') unstaged += 1
+  }
+  return { staged, unstaged, untracked }
 }
 
 /** `log -1 --format=%cI%n%s` 的两行结果。 */

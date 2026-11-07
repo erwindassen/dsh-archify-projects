@@ -21,6 +21,12 @@ export const ARCHIFY_SKILL_NAME = 'archify'
 const BASE_ALLOW = ['read', 'write', 'edit', 'glob', 'grep', 'skill'] as const
 
 /**
+ * 问答会话的白名单：只读代码 + 加载 archify（不需要出图，但保留 skill 方便看口径）。
+ * 没有 shell、没有写工具 —— 用户要求「会话只剩 archify 和读代码的能力」。
+ */
+const READONLY_ALLOW = ['read', 'glob', 'grep', 'skill'] as const
+
+/**
  * 这个受限 agent 允许使用的工具全集。
  *
  * shell 按平台二选一：宿主在 Windows 上只注册 `pwsh`，写 `bash` 会让
@@ -28,6 +34,11 @@ const BASE_ALLOW = ['read', 'write', 'edit', 'glob', 'grep', 'skill'] as const
  */
 export function allowedToolNames(platform: string = process.platform): readonly string[] {
   return [...BASE_ALLOW, platform === 'win32' ? 'pwsh' : 'bash']
+}
+
+/** 只读会话（提问）允许的工具：读文件、找文件、加载 archify，别的都没有。 */
+export function readonlyToolNames(): readonly string[] {
+  return [...READONLY_ALLOW]
 }
 
 /**
@@ -53,7 +64,7 @@ export function makeGuard(
       return undefined
     }
     if (!allowed.has(exec.name)) {
-      return `工具 "${exec.name}" 在这个会话里被禁用：本会话只用于 archify 出图`
+      return `工具 "${exec.name}" 在这个会话里被禁用：本会话只允许 ${allow.join(' / ')}`
     }
     return undefined
   }
@@ -119,6 +130,14 @@ export function tightenAgent(
   }
 
   return { restricted, guarded, message }
+}
+
+/** 装只读白名单 + 守卫（问答会话用）。 */
+export function tightenReadOnlyAgent(
+  scope: ScopedAgentCtx | undefined,
+  warn: (message: string) => void,
+): TightenResult {
+  return tightenAgent(scope, READONLY_ALLOW, warn)
 }
 
 /** 有 `effect` 就交给它管生命周期，没有就直接装。 */

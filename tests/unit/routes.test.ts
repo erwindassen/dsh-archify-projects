@@ -212,28 +212,47 @@ describe('driftOf', () => {
     ...emptyGitSnapshot('2026-11-06T12:00:00Z'),
     isRepo: true,
     branch: 'main',
-    commit: 'aaa',
+    tree: { staged: 0, unstaged: 0, untracked: 0 },
+    dirty: false,
   }
 
-  test('同分支同提交 = 无漂移', () => {
+  test('同分支同工作区 = 无漂移', () => {
     const drift = driftOf(base, base)
     expect(drift).toEqual({
       branchChanged: false,
-      commitChanged: false,
+      treeChanged: false,
       dirty: false,
       behind: 0,
       summary: null,
     })
   })
 
-  test('换分支 + 有新提交 + 落后 + 脏，四件事都进说明', () => {
-    const drift = driftOf(base, { ...base, branch: 'dev', commit: 'bbb', behind: 2, dirty: true })
+  test('换分支 + 工作区变化 + 落后，三件事都进说明', () => {
+    const next = {
+      ...base,
+      branch: 'dev',
+      tree: { staged: 2, unstaged: 1, untracked: 0 },
+      dirty: true,
+      behind: 2,
+    }
+    const drift = driftOf(base, next)
     expect(drift.branchChanged).toBe(true)
-    expect(drift.commitChanged).toBe(true)
+    expect(drift.treeChanged).toBe(true)
     expect(drift.behind).toBe(2)
     expect(drift.summary).toContain('dev')
     expect(drift.summary).toContain('落后')
-    expect(drift.summary).toContain('未提交')
+    expect(drift.summary).toContain('工作区')
+  })
+
+  test('只动工作区、分支没变，也算漂移', () => {
+    const drift = driftOf(base, {
+      ...base,
+      tree: { staged: 1, unstaged: 0, untracked: 0 },
+      dirty: true,
+    })
+    expect(drift.branchChanged).toBe(false)
+    expect(drift.treeChanged).toBe(true)
+    expect(drift.summary).toContain('工作区')
   })
 
   test('非 Git 两边都不算分支变化', () => {

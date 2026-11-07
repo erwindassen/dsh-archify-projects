@@ -10,7 +10,18 @@
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
-import { LEDGER_VERSION, emptyLedger, type Project, type ProjectLedger } from '../shared/types.js'
+import {
+  LEDGER_VERSION,
+  emptyGitSnapshot,
+  emptyLedger,
+  type Concept,
+  type DiagramKind,
+  type DiagramState,
+  type Project,
+  type ProjectLedger,
+  type QaEntry,
+  type TreeState,
+} from '../shared/types.js'
 
 /** 台账容器。 */
 export class ProjectStore {
@@ -164,25 +175,39 @@ export class ProjectStore {
   }
 }
 
-/** 单条记录的最小合法性：id / repoPath / 两张图齐全即可。 */
+/** 单条记录的最小合法性：id / repoPath / 两张默认图齐全即可。 */
 function normalizeProject(item: unknown): Project | null {
   if (typeof item !== 'object' || item === null) return null
   const p = item as Record<string, unknown>
   if (typeof p.id !== 'string' || p.id.length === 0) return null
   if (typeof p.repoPath !== 'string' || p.repoPath.length === 0) return null
   const now = new Date().toISOString()
-  const diagrams = (p.diagrams ?? {}) as Record<string, unknown>
+  const diagrams = (
+    typeof p.diagrams === 'object' && p.diagrams !== null ? p.diagrams : {}
+  ) as Record<string, unknown>
+  const customRaw = Array.isArray(p.diagrams) ? p.diagrams : p.custom
   return {
     id: p.id,
     name: typeof p.name === 'string' && p.name.length > 0 ? p.name : p.repoPath,
     repoPath: p.repoPath,
     createdAt: typeof p.createdAt === 'string' ? p.createdAt : now,
     updatedAt: typeof p.updatedAt === 'string' ? p.updatedAt : now,
-    git: (p.git ?? {}) as Project['git'],
+    git: normalizeGit(p.git),
     diagrams: {
-      structure: normalizeDiagram(diagrams.structure),
-      domain: normalizeDiagram(diagrams.domain),
+      structure: normalizeDiagram(diagrams.structure, 'structure'),
+      domain: normalizeDiagram(diagrams.domain, 'domain'),
     },
+    custom: Array.isArray(customRaw)
+      ? customRaw
+          .map((item) => normalizeCustomDiagram(item))
+          .filter((d): d is DiagramState => d !== null)
+      : [],
+    concepts: Array.isArray(p.concepts)
+      ? p.concepts.map((c) => normalizeConcept(c)).filter((c): c is Concept => c !== null)
+      : [],
+    qa: Array.isArray(p.qa)
+      ? p.qa.map((q) => normalizeQa(q)).filter((q): q is QaEntry => q !== null)
+      : [],
     lastRun: normalizeRun(p.lastRun),
     runs: Array.isArray(p.runs)
       ? p.runs
@@ -192,21 +217,110 @@ function normalizeProject(item: unknown): Project | null {
   }
 }
 
-function normalizeDiagram(value: unknown): Project['diagrams']['structure'] {
+function normalizeDiagram(value: unknown, kind: DiagramKind): DiagramState {
   const d = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>
-  const status = d.status
   return {
-    status:
-      status === 'queued' || status === 'running' || status === 'ready' || status === 'failed'
-        ? status
-        : 'idle',
+    id: typeof d.id === 'string' && d.id.length > 0 ? d.id : kind,
+    kind,
+    title: typeof d.title === 'string' && d.title.length > 0 ? d.title : kind,
+    prompt: typeof d.prompt === 'string' ? d.prompt : null,
+    persistence: d.persistence === 'temporary' ? 'temporary' : 'permanent',
+    parentId: typeof d.parentId === 'string' ? d.parentId : null,
+    setId: typeof d.setId === 'string' ? d.setId : kind === 'structure' ? 'structure' : null,
+    conceptIds: readStringArray(d.conceptIds),
+    status: readStatus(d.status),
     htmlPath: typeof d.htmlPath === 'string' ? d.htmlPath : null,
     specPath: typeof d.specPath === 'string' ? d.specPath : null,
     generatedAt: typeof d.generatedAt === 'string' ? d.generatedAt : null,
     branch: typeof d.branch === 'string' ? d.branch : null,
-    commit: typeof d.commit === 'string' ? d.commit : null,
+    tree: normalizeTree(d.tree),
     error: typeof d.error === 'string' ? d.error : null,
   }
+}
+
+function normalizeCustomDiagram(value: unknown): DiagramState | null {
+  if (typeof value !== 'object' || value === null) return null
+  const d = value as Record<string, unknown>
+  if (typeof d.id !== 'string' || d.id.length === 0) return null
+  return {
+    id: d.id,
+    kind: 'custom',
+    title: typeof d.title === 'string' && d.title.length > 0 ? d.title : '自定义图',
+    prompt: typeof d.prompt === 'string' ? d.prompt : null,
+    persistence: d.persistence === 'temporary' ? 'temporary' : 'permanent',
+    parentId: typeof d.parentId === 'string' && d.parentId.length > 0 ? d.parentId : null,
+    setId: typeof d.setId === 'string' && d.setId.length > 0 ? d.setId : null,
+    conceptIds: readStringArray(d.conceptIds),
+    status: readStatus(d.status),
+    htmlPath: typeof d.htmlPath === 'string' ? d.htmlPath : null,
+    specPath: typeof d.specPath === 'string' ? d.specPath : null,
+    generatedAt: typeof d.generatedAt === 'string' ? d.generatedAt : null,
+    branch: typeof d.branch === 'string' ? d.branch : null,
+    tree: normalizeTree(d.tree),
+    error: typeof d.error === 'string' ? d.error : null,
+  }
+}
+
+function normalizeConcept(value: unknown): Concept | null {
+  if (typeof value !== 'object' || value === null) return null
+  const c = value as Record<string, unknown>
+  if (typeof c.id !== 'string' || c.id.length === 0) return null
+  return {
+    id: c.id,
+    name: typeof c.name === 'string' && c.name.length > 0 ? c.name : c.id,
+    summary: typeof c.summary === 'string' ? c.summary : '',
+    evidence: readStringArray(c.evidence),
+    tags: readStringArray(c.tags),
+    updatedAt: typeof c.updatedAt === 'string' ? c.updatedAt : new Date().toISOString(),
+  }
+}
+
+function normalizeQa(value: unknown): QaEntry | null {
+  if (typeof value !== 'object' || value === null) return null
+  const q = value as Record<string, unknown>
+  if (typeof q.id !== 'string' || typeof q.question !== 'string') return null
+  return {
+    id: q.id,
+    diagramId: typeof q.diagramId === 'string' ? q.diagramId : '',
+    question: q.question,
+    answer: typeof q.answer === 'string' ? q.answer : '',
+    at: typeof q.at === 'string' ? q.at : new Date().toISOString(),
+    applied: q.applied === true,
+  }
+}
+
+function normalizeGit(value: unknown): Project['git'] {
+  const g = (typeof value === 'object' && value !== null ? value : {}) as Record<string, unknown>
+  const base = emptyGitSnapshot(new Date().toISOString())
+  return {
+    ...base,
+    ...g,
+    tree: normalizeTree(g.tree),
+  } as Project['git']
+}
+
+function normalizeTree(value: unknown): TreeState | null {
+  if (typeof value !== 'object' || value === null) return null
+  const t = value as Record<string, unknown>
+  const staged = Number(t.staged)
+  const unstaged = Number(t.unstaged)
+  const untracked = Number(t.untracked)
+  if (!Number.isFinite(staged) || !Number.isFinite(unstaged) || !Number.isFinite(untracked)) {
+    return null
+  }
+  return { staged, unstaged, untracked }
+}
+
+function readStatus(value: unknown): DiagramState['status'] {
+  return value === 'queued' || value === 'running' || value === 'ready' || value === 'failed'
+    ? value
+    : 'idle'
+}
+
+function readStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string')
+    : []
 }
 
 function normalizeRun(value: unknown): Project['lastRun'] {
@@ -224,6 +338,7 @@ function normalizeRun(value: unknown): Project['lastRun'] {
     finishedAt: typeof r.finishedAt === 'string' ? r.finishedAt : null,
     error: typeof r.error === 'string' ? r.error : null,
     note: typeof r.note === 'string' ? r.note : null,
+    diagramIds: readStringArray(r.diagramIds),
   }
 }
 
