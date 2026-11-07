@@ -249,9 +249,10 @@ export class Runner {
   ): Promise<string | null> {
     const { ctx, config } = this.deps
     const allow = mode === 'ask' ? readonlyToolNames() : allowedToolNames()
+    const presetId = mode === 'ask' ? config.askPresetId : config.presetId
     const controller = serviceOf<SessionControllerLike>(ctx, 'sessionController')
     if (controller !== undefined) {
-      const created = await controller.create({ cwd: workspaceDir, agentPreset: config.presetId })
+      const created = await controller.create({ cwd: workspaceDir, agentPreset: presetId })
       // 会话刚建好、还没开 turn：这时候收口工具面最干净
       this.tighten(created.sessionId, allow, mode)
       if (typeof controller.prompt === 'function') {
@@ -282,7 +283,7 @@ export class Runner {
     }
     const created = await agents.createSession({
       cwd: workspaceDir,
-      agentPreset: config.presetId,
+      agentPreset: presetId,
       reusable: () => false,
     })
     const agent = created.agent
@@ -423,9 +424,10 @@ export class Runner {
       projectId,
       (await store.get(projectId))?.custom.map((d) => d.id) ?? [],
     ).catch(() => new Map<string, string>())
+    const concepts = await readConcepts(config, projectId).catch(() => [])
     const root = workspaceRoot(config)
     await store.patch(projectId, (current) => {
-      let next: Project = current
+      let next: Project = { ...current, concepts: mergeConcepts(current.concepts, concepts) }
       for (const diagram of allDiagrams(current)) {
         if (diagram.status !== 'running' && diagram.status !== 'queued') continue
         const html = salvaged.get(diagram.id) ?? salvaged.get(legacyMarkerId(diagram.id))

@@ -55,3 +55,35 @@
               # 之前这里解析的是 @tt-a1i/archify-dsh —— 那个包一旦被卸载，
               # 整个 preset 建会话就抛 Cannot find module，图一张都出不来。
               bundledSkillDir: !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-archify-projects/package.json')), 'skills')
+
+    # 只读问答会话：没有 shell、没有写工具，只能读文件 + 加载 archify。
+    # 放在 preset 层而不是只靠运行期 restrict：restrict 依赖 agent 作用域，宿主版本
+    # 变化时可能装不上；preset 是配置事实，建会话时就决定了工具面。
+    - id: preset-archify-ask
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: archify-projects-ask
+        name: Archify 问答
+        description: 只读代码回答图细节；工具只有 fs / fs-search / skill，skill 只有 archify
+        order: 21
+        plugins:
+          - id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              prefix: >-
+                You answer questions about an architecture diagram. Read the code,
+                cite file paths, and never guess. You cannot write files or run commands.
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: true
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: archify-skill-ask
+            name: '@deepseek-ai/dsh-skill-filesystem'
+            config:
+              providerName: archify-projects-ask
+              includeDefaultRoots: false
+              bundledSkillDir: !!js process.getBuiltinModule('node:path').join(process.getBuiltinModule('node:path').dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('dsh-archify-projects/package.json')), 'skills')

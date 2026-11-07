@@ -12,6 +12,7 @@ import path from 'node:path'
 export interface RawPluginConfig {
   readonly dataDir?: unknown
   readonly presetId?: unknown
+  readonly askPresetId?: unknown
   readonly archifySkillDir?: unknown
   readonly runTimeoutMs?: unknown
   readonly askTimeoutMs?: unknown
@@ -24,6 +25,8 @@ export interface ResolvedConfig {
   readonly dataDir: string
   /** 受限 agent preset 的 id（与 cordis.patch.yml 里声明的一致）。 */
   readonly presetId: string
+  /** 只读问答会话的 preset id（没有 shell / 写工具）。 */
+  readonly askPresetId: string
   /** 显式指定的 archify skill 目录；null 表示自动探测。 */
   readonly archifySkillDir: string | null
   /** 单次 agent 运行的超时（毫秒）。 */
@@ -55,6 +58,7 @@ export function resolveConfig(
 
   const dataDir = readString(raw?.dataDir, dataDirDefault, 'dataDir', warnings)
   const presetId = readString(raw?.presetId, 'archify-projects', 'presetId', warnings)
+  const askPresetId = readString(raw?.askPresetId, 'archify-projects-ask', 'askPresetId', warnings)
   const skillRaw = raw?.archifySkillDir
   const archifySkillDir =
     typeof skillRaw === 'string' && skillRaw.trim().length > 0
@@ -64,6 +68,7 @@ export function resolveConfig(
   return {
     dataDir: path.resolve(dataDir),
     presetId,
+    askPresetId,
     archifySkillDir,
     runTimeoutMs: readPositiveInt(raw?.runTimeoutMs, 20 * 60 * 1000, 'runTimeoutMs', warnings),
     askTimeoutMs: readPositiveInt(raw?.askTimeoutMs, 6 * 60 * 1000, 'askTimeoutMs', warnings),

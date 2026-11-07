@@ -22,7 +22,7 @@ DSH 的左栏插件「架构建模」：把一个代码库登记进台账，用*
 | 方面   | 状态                                                                                                                                                          |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 功能   | 新增/删除项目、Git 探测（分支/commit/上游/脏）、首次生成、更新（切分支+快进+重跑）、重新生成单图、运行记录、深/浅色、非 Git 目录、iframe 内嵌预览、新窗口打开 |
-| 测试   | 154 个用例 / 12 个文件，`vitest` 全绿（约 2 s）                                                                                                               |
+| 测试   | 160 个用例 / 12 个文件，`vitest` 全绿（约 2 s）                                                                                                               |
 | 静态门 | `tsc`（两份 tsconfig）、`eslint`、`prettier --check`、`dependency-cruiser`、`artifact:check`（51.5 KB / 220 KB 预算）全绿                                     |
 | 真机   | 在 `127.0.0.1:3080` 的真实宿主里跑通过「Git 项目」与「非 Git 目录」两条路径，深浅色都验过；截图见 [`docs/verify/`](./verify)                                  |
 | 产物   | `~/.dsh/dsh-archify-projects/` 下 1 个项目（`dsh-word-learn`），两张图 ready                                                                                  |
@@ -139,11 +139,11 @@ pnpm verify        # build → artifact:check → typecheck/lint/format/deps →
 
 ## 5. agent 只能用 archify，无关工具进不来（三层）
 
-| 层       | 机制                                                                                                  | 效果                                             |
-| -------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| preset   | `cordis.patch.yml` 里私有 preset `archify-projects`，只挂 fs / fs-search / shell / skill              | 工具面天生就这么大                               |
-| skill 源 | preset 私有的 `dsh-skill-filesystem`：`includeDefaultRoots: false` + `bundledSkillDir` 指向 `skills/` | agent 的 skill 列表里只有 `archify`              |
-| 运行期   | `policy.ts`：`tools.restrict({ allow })` + `tools.guard(fn)`                                          | 即使在名单外被调用也被拒；`skill` 只认 `archify` |
+| 层       | 机制                                                                                                                                                       | 效果                                             |
+| -------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| preset   | `cordis.patch.yml` 里两个私有 preset：出图 `archify-projects`（fs / fs-search / shell / skill）、问答 `archify-projects-ask`（**fs / fs-search / skill**） | 工具面天生就这么大                               |
+| skill 源 | preset 私有的 `dsh-skill-filesystem`：`includeDefaultRoots: false` + `bundledSkillDir` 指向 `skills/`                                                      | agent 的 skill 列表里只有 `archify`              |
+| 运行期   | `policy.ts`：`tools.restrict({ allow })` + `tools.guard(fn)`                                                                                               | 即使在名单外被调用也被拒；`skill` 只认 `archify` |
 
 两种会话，白名单不同：
 
@@ -195,7 +195,7 @@ pnpm artifact:check # dist/client.js 体积与外部化
 pnpm verify         # 以上全部 + build
 ```
 
-当前基线：**154 passed / 12 files**，`coverage` 目录不进版本库。
+当前基线：**160 passed / 12 files**，`coverage` 目录不进版本库。
 
 测试布局（改哪儿补哪儿）：
 

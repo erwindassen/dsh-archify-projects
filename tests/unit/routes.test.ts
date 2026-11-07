@@ -13,7 +13,7 @@ import { beforeEach, describe, expect, test, vi } from 'vitest'
 import { resolveConfig } from '../../src/host/config.js'
 import { createDispatcher, driftOf, newProjectId, type RouteState } from '../../src/host/routes.js'
 import { ProjectStore } from '../../src/host/store.js'
-import { emptyGitSnapshot } from '../../src/shared/types.js'
+import { createProject, emptyGitSnapshot, type Project } from '../../src/shared/types.js'
 import { projectDir, workspaceRoot } from '../../src/host/config.js'
 import { fakeRequest, fakeResponse } from '../support/http.js'
 
@@ -204,6 +204,133 @@ describe('产物访问', () => {
     const res = await call('/dsh-archify-projects/artifact/demo/a.html')
     expect(res.status).toBe(200)
     expect(res.headers['content-type']).toContain('text/html')
+  })
+})
+
+describe('自定义图与问答', () => {
+  async function seed(): Promise<Project> {
+    const repo = path.join(root, 'repo2')
+    await mkdir(repo, { recursive: true })
+    const now = '2026-11-07T00:00:00.000Z'
+    const project = createProject({
+      id: 'prj_1',
+      name: '演示',
+      repoPath: repo,
+      now,
+      git: {
+        ...emptyGitSnapshot(now),
+        isRepo: true,
+        branch: 'main',
+        tree: { staged: 1, unstaged: 2, untracked: 0 },
+      },
+    })
+    await state.store.upsert(project)
+    return project
+  }
+
+  test('新建自定义图：落台账、带 prompt/时效、起运行', async () => {
+    await seed()
+    const res = await call('/dsh-archify-projects/projects/prj_1/diagrams', {
+      method: 'POST',
+      body: JSON.stringify({ title: '调用链', prompt: '画调用链', persistence: 'temporary' }),
+    })
+    expect(res.status).toBe(200)
+    const project = await state.store.get('prj_1')
+    expect(project?.custom).toHaveLength(1)
+    expect(project?.custom[0]?.kind).toBe('custom')
+    expect(project?.custom[0]?.prompt).toBe('画调用链')
+    expect(project?.custom[0]?.persistence).toBe('temporary')
+    expect(state.runner.start).toHaveBeenCalledTimes(1)
+  })
+
+  test('PATCH 改时效，DELETE 删图', async () => {
+    const project = await seed()
+    const id = 'dgm_test'
+    await state.store.patch('prj_1', (current) => ({
+      ...current,
+      custom: [
+        {
+          ...project.diagrams.structure,
+          id,
+          kind: 'custom' as const,
+          title: 'x',
+          prompt: 'p',
+          persistence: 'temporary' as const,
+          parentId: null,
+          setId: null,
+          status: 'idle' as const,
+          htmlPath: null,
+          specPath: null,
+          generatedAt: null,
+          branch: null,
+          tree: null,
+          error: null,
+        },
+      ],
+    }))
+    const patched = await call(`/dsh-archify-projects/projects/prj_1/diagrams/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ persistence: 'permanent' }),
+    })
+    expect(patched.status).toBe(200)
+    expect((await state.store.get('prj_1'))?.custom[0]?.persistence).toBe('permanent')
+    const removed = await call(`/dsh-archify-projects/projects/prj_1/diagrams/${id}`, {
+      method: 'DELETE',
+    })
+    expect(removed.status).toBe(200)
+    expect((await state.store.get('prj_1'))?.custom).toHaveLength(0)
+  })
+
+  test('merge：回答写进 prompt 并重画', async () => {
+    await seed()
+    await state.store.patch('prj_1', (current) => ({
+      ...current,
+      qa: [
+        {
+          id: 'qa_1',
+          diagramId: 'structure',
+          question: '超时怎么算？',
+          answer: 'withTimeout 20 分钟。',
+          at: '2026-11-07T00:00:00.000Z',
+          applied: false,
+        },
+      ],
+    }))
+    const res = await call('/dsh-archify-projects/projects/prj_1/qa/qa_1/merge', {
+      method: 'POST',
+    })
+    expect(res.status).toBe(200)
+    const project = await state.store.get('prj_1')
+    expect(project?.diagrams.structure.prompt).toContain('超时怎么算')
+    expect(project?.diagrams.structure.prompt).toContain('20 分钟')
+    expect(project?.qa[0]?.applied).toBe(true)
+    expect(state.runner.start).toHaveBeenCalled()
+  })
+
+  test('child：以回答建子图并挂 parentId', async () => {
+    await seed()
+    await state.store.patch('prj_1', (current) => ({
+      ...current,
+      qa: [
+        {
+          id: 'qa_2',
+          diagramId: 'structure',
+          question: '路由注册失败会怎样？',
+          answer: 'warn 后跳过。',
+          at: '2026-11-07T00:00:00.000Z',
+          applied: false,
+        },
+      ],
+    }))
+    const res = await call('/dsh-archify-projects/projects/prj_1/qa/qa_2/child', {
+      method: 'POST',
+    })
+    expect(res.status).toBe(200)
+    const project = await state.store.get('prj_1')
+    expect(project?.custom).toHaveLength(1)
+    expect(project?.custom[0]?.parentId).toBe('structure')
+    expect(project?.custom[0]?.persistence).toBe('permanent')
+    expect(project?.custom[0]?.prompt).toContain('warn 后跳过')
   })
 })
 
