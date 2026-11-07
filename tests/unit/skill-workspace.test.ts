@@ -92,7 +92,9 @@ describe('confineToRoot', () => {
   })
 
   test('绝对路径逃逸被拒', () => {
-    expect(confineToRoot('C:/ws', 'C:/Windows/win.ini')).toBeNull()
+    // 'C:/Windows/win.ini' 在 POSIX 上是相对路径，会被解析进根内；用真正的绝对路径，
+    // 保证 Windows 与 Linux 上测的是同一件事：绝对路径不允许穿出根。
+    expect(confineToRoot(root, path.resolve(root, '..', 'win.ini'))).toBeNull()
   })
 
   test('根自身合法', () => {
