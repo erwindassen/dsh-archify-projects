@@ -929,7 +929,7 @@ function Workbench({
   )
 }
 
-/** 图片上方的缩略图条：默认两张 + 自定义图（子图挂在父图后面）。 */
+/** 图片上方的图名 tab 条：默认两张 + 自定义图（子图挂在父图后面）。 */
 export function ThumbStrip({
   t,
   project,
@@ -978,35 +978,18 @@ export function ThumbStrip({
         </Fragment>
       ))}
       <button className="dap-strip__new" onClick={onNewDiagram} title={t('action.newDiagram')}>
-        <span aria-hidden="true">＋</span>
-        {t('action.newDiagram')}
+        ＋ {t('action.newDiagram')}
       </button>
     </div>
   )
 }
 
 /**
- * 缩略图里藏掉成品自带的工具条。
+ * 一个图名 tab：只有文字，没有缩略图。
  *
- * archify 的 HTML 顶部有「浅色/经典/演示/导出」一排按钮，缩到 0.25 倍后仍然抢眼，
- * 而且这些按钮在缩略图里点不到（pointer-events:none），干脆隐藏。同源才能改，
- * 跨域/被拦就静默跳过。
+ * 之前用 0.25 倍 iframe 做真预览，一条占 91px，把图片本身压下去；改成纯文字后
+ * 整条 32px，状态用一个 5px 圆点表达，临时图挂一个小标签。
  */
-export function hideArtifactChrome(frame: HTMLIFrameElement): void {
-  try {
-    const doc = frame.contentDocument
-    if (doc === null) return
-    const style = doc.createElement('style')
-    style.dataset.thumbChrome = 'hidden'
-    style.textContent =
-      '.toolbar, .diagram-nav, .focus-chip, .archify-toast { display: none !important; }'
-    doc.head.appendChild(style)
-  } catch {
-    // 跨域或被沙箱拦住：缩略图里留着工具条也不影响切换
-  }
-}
-
-/** 一张缩略图：ready 的图用缩放后的 iframe 做真预览，其它显示状态。 */
 function Thumb({
   t,
   diagram,
@@ -1020,50 +1003,21 @@ function Thumb({
   child?: boolean
   onSelect: (id: string) => void
 }): ReactElement {
-  const ready = diagram.status === 'ready' && diagram.htmlPath !== null
+  const tone = diagram.status === 'ready' ? 'ok' : diagram.status === 'failed' ? 'err' : 'warn'
   return (
     <button
-      className={
-        active
-          ? child
-            ? 'dap-thumbcard dap-thumbcard--child dap-thumbcard--on'
-            : 'dap-thumbcard dap-thumbcard--on'
-          : child
-            ? 'dap-thumbcard dap-thumbcard--child'
-            : 'dap-thumbcard'
-      }
+      className={['dap-tabitem', active ? 'dap-tabitem--on' : '', child ? 'dap-tabitem--child' : '']
+        .filter((part) => part.length > 0)
+        .join(' ')}
       role="tab"
       aria-selected={active}
       onClick={() => onSelect(diagram.id)}
-      title={diagram.title}
+      title={`${diagram.title} · ${t(`status.${diagram.status}` as never)}`}
     >
-      <span
-        className={
-          diagram.status === 'ready'
-            ? 'dap-thumbcard__dot'
-            : diagram.status === 'failed'
-              ? 'dap-thumbcard__dot dap-thumbcard__dot--err'
-              : 'dap-thumbcard__dot dap-thumbcard__dot--warn'
-        }
-        aria-hidden="true"
-      />
-      {ready ? (
-        <iframe
-          className="dap-thumbcard__preview"
-          title={diagram.title}
-          src={ROUTES.artifact(diagram.htmlPath as string)}
-          sandbox="allow-scripts allow-same-origin"
-          loading="lazy"
-          tabIndex={-1}
-          aria-hidden="true"
-          onLoad={(event) => hideArtifactChrome(event.currentTarget)}
-        />
-      ) : (
-        <span className="dap-thumbcard__empty">{t(`status.${diagram.status}` as never)}</span>
-      )}
-      <span className="dap-thumbcard__title">{diagram.title}</span>
+      <Dot tone={tone} />
+      <span className="dap-tabitem__name">{diagram.title}</span>
       {diagram.persistence === 'temporary' ? (
-        <span className="dap-thumbcard__tag">{t('persistence.temporary')}</span>
+        <span className="dap-tabitem__tag">{t('persistence.temporaryShort')}</span>
       ) : null}
     </button>
   )

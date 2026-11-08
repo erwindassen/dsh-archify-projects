@@ -385,7 +385,7 @@ cacheWriteTokens`）写 `RunRecord.usage`、`QaEntry.usage`，并累加 `Project
 已同步加 `zifei` + `ZIFEI_API_KEY`。换网关时记得两边一起改。
 
 **v0.6 布局**（`docs/DESIGN.md` §16）：工作台从三栏变两栏，删掉左栏「图册树」与
-「概念索引」；图的选择改成图片上方 91px 的缩略图条（ready 图用缩放后的 iframe 做真预览，
-`hideArtifactChrome` 把成品工具栏藏掉），「新建图」是条尾的虚线按钮。
+「概念索引」；图的选择改成图片上方 **35px 的纯文字图名 tab**（v0.7 把 91px 的缩略图条又压掉了，
+不再有额外 iframe），「新建图」是条尾的虚线按钮。
 查看器宽度从 ≈566px 增到 784px（1440 窗口）。组件测试里断言了「没有 `.dap-rail__group`」，
 别把左栏加回来。

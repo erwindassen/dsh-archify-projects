@@ -208,7 +208,7 @@ describe('StudioPage', () => {
     void container
   })
 
-  test('缩略图条：默认两张 + 新建图，点缩略图切图', async () => {
+  test('图名 tab 条：默认两张 + 新建图，点 tab 切图', async () => {
     const project = makeProject({
       diagrams: {
         ...makeProject().diagrams,
@@ -225,6 +225,8 @@ describe('StudioPage', () => {
     fireEvent.click(await screen.findByText('演示仓库'))
     const tabs = await screen.findAllByRole('tab')
     expect(tabs.map((tab) => tab.textContent)).toEqual(['项目结构图', '领域图'])
+    // 纯文字 tab：条高不应超过 40px，也不再渲染缩略图 iframe
+    expect(container.querySelectorAll('.dap-thumbcard, .dap-thumbcard__preview')).toHaveLength(0)
     // 第一张是结构图
     expect(container.querySelector('.dap-iframe')?.getAttribute('src')).toContain('a.html')
     fireEvent.click(tabs[1] as Element)

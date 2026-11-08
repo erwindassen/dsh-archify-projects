@@ -105,6 +105,7 @@ const zh: Record<string, string> = {
 
   'persistence.permanent': '永久 · 下次更新沿用',
   'persistence.temporary': '临时 · 仅这一次',
+  'persistence.temporaryShort': '临时',
   'persistence.permanentHint': '存住 prompt，下次「更新图册」自动用同一 prompt 重画。',
   'persistence.temporaryHint': '只跑这一次，不占下次更新的时间；产物仍可查看。',
   'parent.none': '独立套图',
@@ -303,6 +304,7 @@ const en: Record<string, string> = {
 
   'persistence.permanent': 'Permanent · reuse next update',
   'persistence.temporary': 'Temporary · this run only',
+  'persistence.temporaryShort': 'TEMP',
   'persistence.permanentHint':
     'The prompt is kept; the next atlas update redraws it with the same prompt.',
   'persistence.temporaryHint': 'Runs once, skipped on future updates; artifacts stay available.',

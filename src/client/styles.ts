@@ -104,51 +104,33 @@ export const PAGE_CSS = `
 .dap-panel__body { padding: 7px; }
 
 .dap-strip {
-  display: flex; gap: 8px; align-items: stretch; padding: 8px 10px;
+  display: flex; gap: 2px; align-items: center; padding: 4px 8px;
   overflow-x: auto; border-bottom: 1px solid var(--dsw-alias-border-l1);
   background: var(--dsw-alias-bg-layer-1); flex: none;
 }
-.dap-strip__sep { flex: none; width: 1px; align-self: stretch; background: var(--dsw-alias-border-l1); margin: 0 2px; }
-.dap-thumbcard {
-  position: relative; flex: none; width: 132px; height: 74px; border-radius: var(--dsw-radius-md);
-  overflow: hidden; border: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-2); cursor: pointer; padding: 0; text-align: left;
+.dap-strip__sep { flex: none; width: 1px; height: 16px; background: var(--dsw-alias-border-l1); margin: 0 4px; }
+.dap-tabitem {
+  display: inline-flex; align-items: center; gap: 6px; flex: none; max-width: 220px;
+  height: 26px; padding: 0 9px; border-radius: var(--dsw-radius-md);
+  border: 1px solid transparent; background: transparent;
+  color: var(--dsw-alias-label-secondary); font-size: 12px; cursor: pointer; white-space: nowrap;
 }
-.dap-thumbcard:hover { border-color: var(--dsw-alias-border-l3); }
-.dap-thumbcard--on { border-color: var(--dsw-alias-label-primary); box-shadow: 0 0 0 1px var(--dsw-alias-label-primary) inset; }
-.dap-thumbcard--child { margin-left: 12px; }
-.dap-thumbcard--child::before {
-  content: "└"; position: absolute; left: -10px; top: 24px; color: var(--dsw-alias-label-tertiary); font-size: 11px;
+.dap-tabitem:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.dap-tabitem--on {
+  background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary);
+  font-weight: 550; border-color: var(--dsw-alias-border-l1);
 }
-.dap-thumbcard__dot {
-  position: absolute; top: 5px; left: 6px; width: 6px; height: 6px; border-radius: 50%;
-  background: var(--dsw-alias-state-success-primary); box-shadow: 0 0 0 2px var(--dsw-alias-bg-layer-1); z-index: 2;
-}
-.dap-thumbcard__dot--warn { background: var(--dsw-alias-state-warn-primary); }
-.dap-thumbcard__dot--err { background: var(--dsw-alias-state-error-primary); }
-.dap-thumbcard__preview {
-  display: block; width: 528px; height: 296px; border: 0; pointer-events: none;
-  transform: scale(0.25); transform-origin: 0 0; background: var(--dsw-alias-bg-base);
-}
-.dap-thumbcard__empty {
-  position: absolute; inset: 0; display: grid; place-items: center;
-  font-size: 11px; color: var(--dsw-alias-label-tertiary);
-}
-.dap-thumbcard__title {
-  position: absolute; left: 0; right: 0; bottom: 0; padding: 3px 6px;
-  font-size: 10.5px; color: var(--dsw-alias-label-primary);
-  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 88%, transparent);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; backdrop-filter: blur(4px);
-}
-.dap-thumbcard__tag {
-  position: absolute; top: 4px; right: 5px; font-size: 9.5px; padding: 0 4px; border-radius: 4px;
-  background: color-mix(in srgb, var(--dsw-alias-bg-layer-1) 88%, transparent);
-  color: var(--dsw-alias-label-tertiary);
+.dap-tabitem--child { margin-left: 10px; }
+.dap-tabitem--child::before { content: "└"; color: var(--dsw-alias-label-tertiary); font-size: 10px; }
+.dap-tabitem__name { overflow: hidden; text-overflow: ellipsis; }
+.dap-tabitem__tag {
+  font-size: 9.5px; padding: 0 4px; border-radius: 4px;
+  background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-tertiary); font-weight: 400;
 }
 .dap-strip__new {
-  flex: none; width: 96px; border-radius: var(--dsw-radius-md); border: 1px dashed var(--dsw-alias-border-l2);
-  background: transparent; color: var(--dsw-alias-label-tertiary); font-size: 11.5px;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; cursor: pointer;
+  flex: none; margin-left: auto; height: 26px; padding: 0 9px; border-radius: var(--dsw-radius-md);
+  border: 1px dashed var(--dsw-alias-border-l2); background: transparent;
+  color: var(--dsw-alias-label-tertiary); font-size: 11.5px; cursor: pointer; white-space: nowrap;
 }
 .dap-strip__new:hover { color: var(--dsw-alias-label-primary); border-color: var(--dsw-alias-border-l3); }
 
