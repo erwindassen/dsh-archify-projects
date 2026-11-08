@@ -154,7 +154,8 @@ git push origin main --tags
 标签与 `package.json` 版本不一致时任务直接失败。
 
 想连 npm 一起发：仓库 Secrets 加 `NPM_TOKEN`，workflow 会多跑 `npm publish --access public`；
-没配就跳过。`.github/workflows/verify.yml` 负责 main / PR 上的常规质量门。
+没配就跳过。首次发 npm 的完整步骤（含镜像源这个坑）见 [`docs/PUBLISH.md`](docs/PUBLISH.md）。
+`.github/workflows/verify.yml` 负责 main / PR 上的常规质量门。
 
 ### 测试分层
 

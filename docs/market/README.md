@@ -27,6 +27,17 @@
 2. **npm 也可以自动发**：仓库 Settings → Secrets 里加 `NPM_TOKEN`，workflow 会多跑一步
    `npm publish --access public`；没配这个 secret 就跳过，不会变红。
 
+   首次发布（本机，注意绕开镜像源）：
+
+   ```bash
+   npm login --registry=https://registry.npmjs.org
+   npm publish --access public --registry=https://registry.npmjs.org
+   ```
+
+   然后把 `~/.npmrc` 里 `//registry.npmjs.org/:_authToken=...` 那一行（登录后会有）
+   填进仓库的 **Settings → Secrets and variables → Actions → `NPM_TOKEN`**。
+   详见 [`docs/PUBLISH.md`](../PUBLISH.md)。
+
 3. 给仓库加 GitHub topic **`dsh-plugin`**（设置页 Topics，评审要求）。
 
 ## 提 PR
