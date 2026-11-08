@@ -37,7 +37,9 @@ dsh plugin --profile web add dsh-archify-projects
 
 然后重启 dsh（宿主侧代码，必须重启）。重启后左栏出现「架构建模」。
 
-**还没有 npm 包时**，用 GitHub Release 上的预构建 tarball 装（和 npm 包内容一致）：
+也在 npm 上（`dsh-archify-projects@0.1.0`，2026-11-09 发布）。
+
+**备用路径**：GitHub Release 上的预构建 tarball（和 npm 包内容一致）：
 
 ```bash
 dsh plugin --profile web add https://github.com/guicaiyue/dsh-archify-projects/releases/download/v0.1.0/dsh-archify-projects-0.1.0.tgz
