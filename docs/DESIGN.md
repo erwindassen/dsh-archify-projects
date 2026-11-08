@@ -765,3 +765,64 @@ Project {
 3. runner：运行中读 `todos` projection（节流写台账），结束时读 `tokenUsage` 写 `usage` / `usageTotal`；
 4. 页面：整屏三栏 + 右栏独立滚动 + runbar + 进度 / 用量区块；
 5. 测试：todo 投影解析、用量累加、长 QA 不影响布局（组件测试可用长文本断言容器高度）。
+
+---
+
+## 15. v0.5：新建图弹窗——把 archify 的图型做成可解释的 tag（2026-11-08）
+
+原型：`docs/design/workbench-v05.html`（OpenDesign 项目 `archify-workbench-v05`），
+截图 `docs/design/v05-dialog-*.png`。
+
+### 15.1 为什么要有图型 tag
+
+用户往往不知道 archify 能画什么，只知道「我想看某个东西」。弹窗里把 archify 的 5 个
+type 做成 tag，点一下告诉用户：**这张图适合看什么、会展示代码库的哪些信息、能让你掌握什么**。
+选不选都可以 —— 不选就是「不限，由 agent 判断」；选了只是让 agent 少猜一步、图更稳。
+
+| tag    | archify type   | 适合看                           | 会展示                                   | 能掌握                                 |
+| ------ | -------------- | -------------------------------- | ---------------------------------------- | -------------------------------------- |
+| 架构图 | `architecture` | 系统由什么组成、谁依赖谁         | 组件与服务、进程/网络/信任边界、外部依赖 | 分层与职责、关键依赖、边界外的风险     |
+| 流程图 | `workflow`     | 一个流程怎么走、有哪些判断与审批 | 步骤、分支条件、失败与回退               | 主流程与异常路径、谁在什么条件下做什么 |
+| 时序图 | `sequence`     | 一次请求在模块之间怎么往返       | 参与者、消息顺序、返回与异步             | 调用链、时序依赖、失败重试点           |
+| 数据流 | `dataflow`     | 数据从哪来、经过谁、到哪去       | 数据源、转换、存储、消费者               | 数据血缘与口径、敏感数据流向           |
+| 状态机 | `lifecycle`    | 一个对象有哪些状态、怎么流转     | 状态、转移条件、终态                     | 状态机全貌、等待与重试、非法流转       |
+
+### 15.2 弹窗结构
+
+1. **图型（可选）**：`不限（agent 判断）` + 5 个 tag；单选、可取消。
+2. **说明卡**：选中后展示「适合看 / 会展示 / 能掌握」三行；prompt 占位符同步变成
+   「已选时序图：prompt 可以只写关注点…」。
+3. **Prompt**：自然语言，必填。
+4. **概念范围**：从项目概念表勾选；只围绕这些概念取证，图更聚焦。
+5. **目录范围**（新增，可选）：`src/host` / `src/client` / `src/shared` 这类目录 chip；
+   只让 agent 在这些目录里取证，不选则扫全仓库。
+6. **时效 / 归属**：沿用 v0.3 的永久/临时、独立套图/挂父图。
+
+图型、概念、目录全部可选；三者都是「选得更准，图更好」，不是必填项。
+
+### 15.3 数据模型增量
+
+```ts
+type ArchifyType = 'architecture' | 'workflow' | 'sequence' | 'dataflow' | 'lifecycle'
+
+DiagramState {
+  ...existing,
+  /** 用户选的 archify 渲染器；null = 由 agent 判断。 */
+  renderer: ArchifyType | null
+  /** 限定取证的目录（相对仓库根）；空数组 = 全仓库。 */
+  pathScope: readonly string[]
+}
+```
+
+- `CreateDiagramRequest` / `PatchDiagramRequest` 加 `renderer`、`pathScope`；
+- 提示词：选了 renderer 就写死「渲染器必须用 `<type>`」；没选则写「按 prompt 选择 type」；
+  有 pathScope 就写「只在这些目录里取证，别读别的」；
+- 默认两张图：`structure` → `architecture`，`domain` → `architecture`（建模口径不同），
+  `renderer` 固定，不进弹窗。
+
+### 15.4 实现顺序
+
+1. types/protocol/store：加 `renderer`、`pathScope`（旧台账补 null / []）；
+2. prompt：渲染器与目录范围的硬约束；
+3. 弹窗：图型 tag + 说明卡 + 目录 chip；
+4. 测试：图型序列化/迁移、prompt 含 renderer/pathScope、弹窗选择联动。
