@@ -29,19 +29,36 @@
 
 ## 安装
 
-```bash
-# 1) 装进 profile（本机开发用 link，发布后用版本号）
-#    在 ~/.dsh/profiles/<name>/package.json 里加：
-#      "dependencies":      { "dsh-archify-projects": "link:D:/projects/blog/dsh-plugins/dsh-archify-projects" }
-#      "dsh.profile.bundles": [ ..., "dsh-archify-projects" ]
-cd ~/.dsh/profiles/web && pnpm install
+装的是**已发布的包**，一条命令，装在哪个 profile 就写哪个名字（默认 `web`）：
 
-# 2) 重启 dsh（宿主侧改动一律要重启；新增 dsh.client 段时更要重启一次）
+```bash
+dsh plugin --profile web add dsh-archify-projects
 ```
 
-依赖：**没有外部依赖**。archify skill 本体（`skills/archify/`，约 7.3 MB，来自
-`@tt-a1i/archify-dsh@1.0.0` 的 tarball）已经内嵌在本插件里，preset 的
-`bundledSkillDir` 指向它，所以装/卸别的 archify 插件都不影响这里。
+然后重启 dsh（宿主侧代码，必须重启）。重启后左栏出现「架构建模」。
+
+**还没有 npm 包时**，用 GitHub Release 上的预构建 tarball 装（和 npm 包内容一致）：
+
+```bash
+dsh plugin --profile web add https://github.com/guicaiyue/dsh-archify-projects/releases/download/v0.1.0/dsh-archify-projects-0.1.0.tgz
+```
+
+> ⚠️ **不要用 `add github:guicaiyue/dsh-archify-projects` 从源码装**：
+> `lib/`、`dist/` 是构建产物、不进版本库，pnpm 默认又不跑构建脚本，装完插件起不来。
+> 要么用 npm 包 / Release tarball，要么先把仓库 clone 下来自己 `pnpm install && pnpm build`
+> 再用 `add link:<绝对路径>`（这是本机开发用的路径）。
+
+**本机开发**（改了代码要立刻生效）：
+
+```bash
+cd ~/.dsh/profiles/web
+pnpm add link:/absolute/path/to/dsh-archify-projects   # 或在 package.json 里写 link:
+# dsh.profile.bundles 里同时要有 "dsh-archify-projects"
+```
+
+依赖：**没有外部 npm 依赖**。archify skill 本体（`skills/archify/`，约 7.3 MB，来自
+`@tt-a1i/archify-dsh@1.0.0` 的 tarball）已经内嵌在包里，preset 的 `bundledSkillDir`
+指向它，所以装/卸别的 archify 插件都不影响这里。
 
 > 早期版本是指向 profile 里的 `@tt-a1i/archify-dsh/skills`，那个包一旦被卸载，
 > 建会话就抛 `Cannot find module '@tt-a1i/archify-dsh/package.json'`，图一张都出不来。
