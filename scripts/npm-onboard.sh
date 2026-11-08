@@ -51,6 +51,20 @@ HINT
   echo "  已发布 dsh-archify-projects@$VERSION"
 fi
 
+echo "== 3.5 检查 token 是否真的能绕过 2FA =="
+TOKEN_CHECK=$(sed -n 's#^//registry.npmjs.org/:_authToken=##p' "$HOME/.npmrc" | tail -1)
+if [ -n "$TOKEN_CHECK" ]; then
+  BYPASS=$(timeout 30 curl -s -H "Authorization: Bearer $TOKEN_CHECK" \
+    https://registry.npmjs.org/-/npm/v1/tokens \
+    | python3 -c 'import json,sys; d=json.load(sys.stdin); print("yes" if any(t.get("bypass_2fa") for t in d.get("objects",[])) else "no")' 2>/dev/null || echo unknown)
+  case "$BYPASS" in
+    yes) echo "  token 带 Bypass 2FA，可以发布" ;;
+    no)  echo "  ⚠ 这个 token 的 bypass_2fa=false，npm 会拒绝发布。" >&2
+         echo "    重新建一个 granular token 并勾上 Bypass two-factor authentication。" >&2 ;;
+    *)   echo "  无法确认（查询 token 元数据失败），继续尝试" ;;
+  esac
+fi
+
 echo "== 4/4 把 token 写进 GitHub Secret NPM_TOKEN =="
 TOKEN=$(sed -n 's#^//registry.npmjs.org/:_authToken=##p' "$HOME/.npmrc" | tail -1)
 if [ -z "$TOKEN" ]; then

@@ -70,7 +70,17 @@ npm publish --access public --registry=https://registry.npmjs.org --otp=123456
 2. Permissions：**Read and write**
 3. Packages and scopes：**All packages**（首次发布时包还不存在，只能选全部）
 4. **勾上 `Bypass two-factor authentication`**（这个开关默认关闭，不勾等于白建）
-5. 生成后：
+5. 生成后先验证开关真的生效（**最容易踩的坑**）：
+
+   ```bash
+   TOKEN=$(sed -n 's#^//registry.npmjs.org/:_authToken=##p' ~/.npmrc | tail -1)
+   curl -s -H "Authorization: Bearer $TOKEN" https://registry.npmjs.org/-/npm/v1/tokens \
+     | python3 -c 'import json,sys; [print(t["name"], "bypass_2fa=", t["bypass_2fa"]) for t in json.load(sys.stdin)["objects"]]'
+   ```
+
+   必须看到 `bypass_2fa= True`。显示 `False` 说明勾选框没保存，得重建。
+
+6. 生成后：
 
 ```bash
 printf '//registry.npmjs.org/:_authToken=%s\n' 'npm_你的token' >> ~/.npmrc
