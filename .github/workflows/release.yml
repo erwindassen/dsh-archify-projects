@@ -1,0 +1,133 @@
+name: release
+
+# 推一个 v* 标签就发一版：先跑质量门，再打包，最后建 Release 并挂 tarball。
+# 例：
+#   npm version patch --no-git-tag-version   # 或者手工改 package.json 的 version
+#   git commit -am "chore: release v0.1.1"
+#   git tag v0.1.1 && git push origin main --tags
+#
+# 版本号以 package.json 为准：标签与它不一致时任务直接失败，不发版。
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的标签（必须与 package.json 的 version 一致），例如 v0.1.0'
+        required: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: build + pack + publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # job 级 env 里能安全读 secrets；步骤用 env 判断，避免 step if 直接引 secrets 的兼容性问题
+      HAS_NPM_TOKEN: ${{ secrets.NPM_TOKEN != '' && '1' || '' }}
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tarball: ${{ steps.meta.outputs.tarball }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # 发布前必须绿；不绿就不发版，避免把坏包挂到 Release 上
+      - name: Verify
+        run: pnpm verify
+
+      - name: Resolve version and check the tag matches
+        id: meta
+        run: |
+          set -euo pipefail
+          VERSION="$(node -p "require('./package.json').version")"
+          REF_TAG="${GITHUB_REF_NAME}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            REF_TAG="${{ inputs.tag }}"
+          fi
+          echo "package.json version: ${VERSION}"
+          echo "ref/tag: ${REF_TAG}"
+          if [ "${REF_TAG}" != "v${VERSION}" ]; then
+            echo "::error::标签 ${REF_TAG} 与 package.json 的 ${VERSION} 不一致（应为 v${VERSION}）"
+            exit 1
+          fi
+          NAME="dsh-archify-projects-${VERSION}.tgz"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tarball=${NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Pack (build is part of verify)
+        run: pnpm pack --pack-destination "$RUNNER_TEMP"
+
+      # 稳定别名：资产名固定为 dsh-archify-projects.tgz，
+      # 这样插件市场的 tarball 字段可以写 releases/latest/download/dsh-archify-projects.tgz，
+      # 每次发版都不用改条目。
+      - name: Prepare assets
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.meta.outputs.version }}"
+          cp "$RUNNER_TEMP/dsh-archify-projects-${VERSION}.tgz" "$RUNNER_TEMP/dsh-archify-projects.tgz"
+          ls -la "$RUNNER_TEMP"/*.tgz
+          sha256sum "$RUNNER_TEMP"/*.tgz | tee "$RUNNER_TEMP/SHA256SUMS.txt"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v${{ steps.meta.outputs.version }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release $TAG 已存在，改为补充资产"
+          else
+            gh release create "$TAG" \
+              --title "dsh-archify-projects ${{ steps.meta.outputs.version }}" \
+              --generate-notes
+          fi
+          gh release upload "$TAG" \
+            "$RUNNER_TEMP/dsh-archify-projects-${{ steps.meta.outputs.version }}.tgz" \
+            "$RUNNER_TEMP/dsh-archify-projects.tgz" \
+            "$RUNNER_TEMP/SHA256SUMS.txt" \
+            --clobber
+
+      # 可选：仓库里配了 NPM_TOKEN secret 才发 npm；没配就跳过，不发红。
+      - name: Publish to npm (optional)
+        if: ${{ env.HAS_NPM_TOKEN == '1' }}
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$RUNNER_TEMP/.npmrc"
+          npm publish --access public --userconfig "$RUNNER_TEMP/.npmrc"
+
+      - name: Summary
+        run: |
+          {
+            echo "### 发布完成"
+            echo ""
+            echo "- 版本：\`${{ steps.meta.outputs.version }}\`"
+            echo "- 资产：\`${{ steps.meta.outputs.tarball }}\` + 稳定别名 \`dsh-archify-projects.tgz\` + \`SHA256SUMS.txt\`"
+            echo "- 安装："
+            echo '  ```sh'
+            echo "  dsh plugin --profile web add ${{ github.server_url }}/${{ github.repository }}/releases/download/v${{ steps.meta.outputs.version }}/${{ steps.meta.outputs.tarball }}"
+            echo '  ```'
+          } >> "$GITHUB_STEP_SUMMARY"

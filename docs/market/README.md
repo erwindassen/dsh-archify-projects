@@ -6,21 +6,26 @@
 
 ## 一次性准备
 
-1. **发 npm 包**（推荐，装起来最快、免构建授权）：
+1. **发一个版本**（Release 由 GitHub Actions 自动建，不用手工上传）：
 
    ```bash
-   npm login                     # 需要你自己的 npm 账号
-   cd dsh-archify-projects
-   pnpm build                    # 或者直接 pnpm publish（prepublishOnly 会构建）
-   npm publish --access public
+   # 改版本号（或 npm version patch --no-git-tag-version）
+   vim package.json          # version: 0.1.0 -> 0.1.1
+   git commit -am "chore: release v0.1.1"
+   git tag v0.1.1
+   git push origin main --tags
    ```
 
-   `prepublishOnly` 已经配好，publish 前会自动 `pnpm build`，tarball 里带 `lib/` 与
-   `dist/client.js`（`pnpm pack` 实测 1.9 MB，含内嵌的 archify skill）。
+   `.github/workflows/release.yml` 会在标签推送后：跑 `pnpm verify` → `pnpm pack`
+   → 建 Release（自动生成 release notes）→ 挂三类资产：
+   - `dsh-archify-projects-<version>.tgz`（带版本号）
+   - `dsh-archify-projects.tgz`（**稳定别名**，市场条目指向它，发版不用改 YAML）
+   - `SHA256SUMS.txt`
 
-2. **或者**把 `pnpm pack` 出来的 tarball 传到 GitHub Release：
-   `gh release create v0.1.0 dsh-archify-projects-0.1.0.tgz`（或网页上传），
-   然后把 `docs/market/guicaiyue__dsh-archify-projects.yml` 里 `tarball:` 的版本号对齐。
+   标签与 `package.json` 的 version 不一致时任务直接失败，不会发出错版。
+
+2. **npm 也可以自动发**：仓库 Settings → Secrets 里加 `NPM_TOKEN`，workflow 会多跑一步
+   `npm publish --access public`；没配这个 secret 就跳过，不会变红。
 
 3. 给仓库加 GitHub topic **`dsh-plugin`**（设置页 Topics，评审要求）。
 

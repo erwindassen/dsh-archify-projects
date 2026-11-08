@@ -135,7 +135,26 @@ pnpm dev            # 只重建客户端产物；保存即热更新进已打开�
 | `prettier --check .`    | 排版漂移                                                                                                         |
 | `depcruise`             | 宿主 ↔ 客户端互相 import、循环依赖、客户端引 `node:` 内建                                                        |
 | `artifact:check`        | 产物形状：单壳 + `id` 等于包名 + 只用 11 个 baseline 外置 + 无顶层 ESM + 体积预算 + **沙箱里真跑一遍 `factory`** |
-| `vitest run --coverage` | 137 个用例；覆盖门槛 lines 70 / branches 60 / functions 70，`git.ts`、`store.ts`、`prompt.ts` 单独收紧           |
+| `vitest run --coverage` | 174 个用例；覆盖门槛 lines 70 / branches 60 / functions 70，`git.ts`、`store.ts`、`prompt.ts` 单独收紧           |
+
+### 发版（Release 由 CI 自动发布）
+
+推 `v*` 标签即发布，**不需要手工打包/上传**：
+
+```bash
+npm version patch --no-git-tag-version     # 或手工改 package.json 的 version
+git commit -am "chore: release v0.1.1"
+git tag v0.1.1
+git push origin main --tags
+```
+
+`.github/workflows/release.yml` 会：`pnpm verify`（不绿不发）→ `pnpm pack` →
+建 Release（自动 release notes）→ 挂 `dsh-archify-projects-<version>.tgz`、
+稳定别名 `dsh-archify-projects.tgz`、`SHA256SUMS.txt`。
+标签与 `package.json` 版本不一致时任务直接失败。
+
+想连 npm 一起发：仓库 Secrets 加 `NPM_TOKEN`，workflow 会多跑 `npm publish --access public`；
+没配就跳过。`.github/workflows/verify.yml` 负责 main / PR 上的常规质量门。
 
 ### 测试分层
 
