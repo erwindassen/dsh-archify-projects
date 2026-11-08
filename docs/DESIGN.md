@@ -900,3 +900,6 @@ DiagramState {
 少一次跨文档写操作，也少一个失败面。
 
 组件测试同步改：断言 tab 文本、断言 `.dap-thumbcard*` 一个都不存在（防止缩略图回归）。
+
+OpenDesign 原型同步更新到 v0.7：`docs/design/workbench-v07.html`
+（项目 `archify-workbench-v07`），截图 `docs/design/v07-prototype.png`，条高与实现一致（35px）。

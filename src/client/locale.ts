@@ -124,17 +124,6 @@ const zh: Record<string, string> = {
   'git.tree': '暂存 {staged} · 未暂存 {unstaged} · 未跟踪 {untracked}',
   'git.treeShort': '{staged} 暂存 · {unstaged} 未暂存',
 
-  'diagram.structure': '项目结构图',
-  'diagram.domain': '领域图',
-  'diagram.custom': '自定义图',
-  'diagram.structureDesc': '模块、分层与依赖关系',
-  'diagram.domainDesc': '限界上下文、聚合、实体与领域事件',
-  'diagram.defaultSet': '默认套图',
-  'diagram.customGroup': '自定义',
-  'diagram.children': '子图',
-  'diagram.concepts': '概念索引',
-  'diagram.allConcepts': '全部 {n}',
-
   'status.idle': '未生成',
   'status.queued': '排队中',
   'status.running': '生成中',
@@ -168,7 +157,6 @@ const zh: Record<string, string> = {
   'qa.mergeHint': '「补进图里」会把这次回答并进这张图并重画；「创建子图」会挂一张新图。',
 
   'concept.title': '概念',
-  'concept.none': '还没有概念表；先跑一次更新。',
 
   'run.history': '运行记录',
   'run.none': '还没有运行记录',
@@ -324,17 +312,6 @@ const en: Record<string, string> = {
   'git.tree': '{staged} staged · {unstaged} unstaged · {untracked} untracked',
   'git.treeShort': '{staged} staged · {unstaged} unstaged',
 
-  'diagram.structure': 'Structure map',
-  'diagram.domain': 'Domain map',
-  'diagram.custom': 'Custom diagram',
-  'diagram.structureDesc': 'Modules, layers and dependencies',
-  'diagram.domainDesc': 'Bounded contexts, aggregates, entities and domain events',
-  'diagram.defaultSet': 'Default set',
-  'diagram.customGroup': 'Custom',
-  'diagram.children': 'Children',
-  'diagram.concepts': 'Concepts',
-  'diagram.allConcepts': 'All {n}',
-
   'status.idle': 'Not generated',
   'status.queued': 'Queued',
   'status.running': 'Generating',
@@ -369,7 +346,6 @@ const en: Record<string, string> = {
     'Merge folds the answer into this diagram and redraws it; Create child attaches a new diagram.',
 
   'concept.title': 'Concepts',
-  'concept.none': 'No concepts yet; run an update first.',
 
   'run.history': 'Runs',
   'run.none': 'No runs yet',
