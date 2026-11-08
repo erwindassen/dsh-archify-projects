@@ -208,6 +208,35 @@ describe('StudioPage', () => {
     void container
   })
 
+  test('新建图：选图型 tag 会显示说明并带进请求', async () => {
+    const project = makeProject()
+    const calls = stubFetch({
+      [ROUTES.projects]: { projects: [project], workspacePath: '/ws' },
+      [`POST ${ROUTES.diagrams('prj_1')}`]: { project },
+    })
+    render(<StudioPage t={t} />)
+    fireEvent.click(await screen.findByText('演示仓库'))
+    fireEvent.click((await screen.findAllByRole('button', { name: /新建图/ }))[0] as Element)
+
+    // 默认「不限」：显示「不选也行」
+    expect(await screen.findByText(DICT.zh['renderer.autoHint'] ?? '')).toBeTruthy()
+
+    // 选时序图 -> 说明卡出现三行
+    fireEvent.click(screen.getByRole('button', { name: /时序图/ }))
+    expect(await screen.findByText(DICT.zh['renderer.sequence.fit'] ?? '')).toBeTruthy()
+    expect(screen.getByText(DICT.zh['renderer.sequence.show'] ?? '')).toBeTruthy()
+    expect(screen.getByText(DICT.zh['renderer.sequence.grasp'] ?? '')).toBeTruthy()
+
+    fireEvent.change(screen.getByPlaceholderText(/不需要看|画出一次|关注点|类型/), {
+      target: { value: '只看调用链' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: DICT.zh['action.submit'] ?? '' }))
+    await waitFor(() => {
+      const post = calls.find((call) => call.method === 'POST')
+      expect(post?.body).toMatchObject({ prompt: '只看调用链', renderer: 'sequence' })
+    })
+  })
+
   test('提问页签显示回答，并能点「补进图里」', async () => {
     const project = makeProject({
       qa: [

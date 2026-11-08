@@ -19,6 +19,16 @@ export type DiagramKind = (typeof DIAGRAM_KINDS)[number]
 /** 图种类：默认两张 + 自定义。 */
 export type DiagramMode = DiagramKind | 'custom'
 
+/** Archify 的真实渲染器（见 skills/archify 的 Type router）。 */
+export const ARCHIFY_TYPES = [
+  'architecture',
+  'workflow',
+  'sequence',
+  'dataflow',
+  'lifecycle',
+] as const
+export type ArchifyType = (typeof ARCHIFY_TYPES)[number]
+
 /** 图的时效。永久图会在「更新图册」时用同一 prompt 重画；临时图只跑这一次。 */
 export type Persistence = 'permanent' | 'temporary'
 
@@ -80,6 +90,10 @@ export interface DiagramState {
   readonly setId: string | null
   /** 这张图引用的概念 id。 */
   readonly conceptIds: readonly string[]
+  /** 用户选的 archify 渲染器；null = 由 agent 按 prompt 判断。 */
+  readonly renderer: ArchifyType | null
+  /** 限定取证的目录（相对仓库根）；空数组 = 全仓库。 */
+  readonly pathScope: readonly string[]
   readonly status: DiagramStatus
   readonly htmlPath: string | null
   readonly specPath: string | null
@@ -102,6 +116,26 @@ export interface Concept {
   readonly updatedAt: string
 }
 
+/** 一条 agent 进度（`todo_write` 的快照）。 */
+export interface TodoItem {
+  readonly content: string
+  readonly status: 'pending' | 'in_progress' | 'completed'
+}
+
+/** 一次运行消耗的 token（来自宿主的 tokenUsage projection）。 */
+export interface TokenUsage {
+  readonly uncachedInput: number
+  readonly output: number
+  readonly cacheRead: number
+  readonly cacheWrite: number
+}
+
+/** 一次运行/一次提问的 token 合计。 */
+export function usageTotalOf(usage: TokenUsage | null): number {
+  if (usage === null) return 0
+  return usage.uncachedInput + usage.output + usage.cacheRead + usage.cacheWrite
+}
+
 /** 对一张图的提问与回答。 */
 export interface QaEntry {
   readonly id: string
@@ -111,6 +145,11 @@ export interface QaEntry {
   readonly at: string
   /** 回答是否已经并进图里。 */
   readonly applied: boolean
+  /** 问答会话的运行状态；运行中页面据此显示进度。 */
+  readonly status: 'running' | 'done' | 'failed'
+  /** 问答会话的 todo 快照。 */
+  readonly todos: readonly TodoItem[]
+  readonly usage: TokenUsage | null
 }
 
 /** 一次 Agent 运行。会话 id 留着是为了能从页面跳回去看日志。 */
@@ -125,6 +164,9 @@ export interface RunRecord {
   readonly note: string | null
   /** 这次运行涉及哪些图（默认图用 kind，自定义图用 id）。 */
   readonly diagramIds: readonly string[]
+  /** agent 的 todo 快照（最后写入的一份，用于运行结束后回看）。 */
+  readonly todos: readonly TodoItem[]
+  readonly usage: TokenUsage | null
 }
 
 /** 一个项目。 */
@@ -147,6 +189,8 @@ export interface Project {
   readonly lastRun: RunRecord | null
   /** 运行历史，旧→新，上限由 config.keepRuns 控制。 */
   readonly runs: readonly RunRecord[]
+  /** 历史累计 token（不随 runs 裁剪丢失）。 */
+  readonly usageTotal: number
 }
 
 /** 台账文件根。 */
@@ -194,6 +238,8 @@ export function emptyDiagramState(kind: DiagramKind = 'structure'): DiagramState
     parentId: null,
     setId: kind === 'structure' ? 'structure' : null,
     conceptIds: [],
+    renderer: 'architecture',
+    pathScope: [],
     status: 'idle',
     htmlPath: null,
     specPath: null,
@@ -313,5 +359,12 @@ export function createProject(input: CreateProjectInput): Project {
     qa: [],
     lastRun: null,
     runs: [],
+    usageTotal: 0,
   }
+}
+
+/** 当前正在进行的 todo（没有就是 null）。 */
+export function activeTodo(run: RunRecord | null): TodoItem | null {
+  if (run === null) return null
+  return run.todos.find((todo) => todo.status === 'in_progress') ?? null
 }

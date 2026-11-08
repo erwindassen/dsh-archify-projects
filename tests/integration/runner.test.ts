@@ -33,6 +33,13 @@ function makeCtx(options: {
   finalText?: string
   withAgent?: boolean
   withSessionController?: boolean
+  todos?: readonly { content: string; status: 'pending' | 'in_progress' | 'completed' }[]
+  usage?: {
+    uncachedInputTokens: number
+    outputTokens: number
+    cacheReadTokens: number
+    cacheWriteTokens: number
+  }
 }): {
   ctx: never
   scope: {
@@ -70,6 +77,21 @@ function makeCtx(options: {
       ),
       createSession: vi.fn(),
     },
+    ...(options.todos === undefined && options.usage === undefined
+      ? {}
+      : {
+          sessionProjections: {
+            snapshot: vi.fn((_session: unknown, keys?: readonly string[]) => {
+              const values: Record<string, unknown> = {}
+              if (keys?.includes('todos') && options.todos !== undefined)
+                values.todos = options.todos
+              if (keys?.includes('tokenUsage') && options.usage !== undefined) {
+                values.tokenUsage = options.usage
+              }
+              return { values }
+            }),
+          },
+        }),
     workspaceRegistry: undefined,
   }
   return { ctx: ctx as never, scope }
@@ -191,6 +213,40 @@ describe('Runner', () => {
     expect(after?.diagrams.structure.status).toBe('failed')
   })
 
+  test('运行结束写回 todo 与 token 用量，并累加项目总量', async () => {
+    const project = await seedProject()
+    const finalText = await placeArtifacts({
+      structure: '.archify/structure-demo-1/demo.html',
+      domain: '.archify/domain-demo-1/demo.html',
+    })
+    const { ctx } = makeCtx({
+      finalText,
+      todos: [
+        { content: '读代码', status: 'completed' },
+        { content: '出图', status: 'in_progress' },
+      ],
+      usage: {
+        uncachedInputTokens: 1200,
+        outputTokens: 300,
+        cacheReadTokens: 500,
+        cacheWriteTokens: 0,
+      },
+    })
+    const runner = new Runner({ ctx, store, config: config(), skillDir: async () => null })
+    await runner.start(project, 'create', ['structure', 'domain'])
+    await runner.whenSettled('prj_1')
+
+    const after = await store.get('prj_1')
+    expect(after?.lastRun?.todos.map((todo) => todo.content)).toEqual(['读代码', '出图'])
+    expect(after?.lastRun?.usage).toEqual({
+      uncachedInput: 1200,
+      output: 300,
+      cacheRead: 500,
+      cacheWrite: 0,
+    })
+    expect(after?.usageTotal).toBe(2000)
+  })
+
   test('已有任务在跑时再点一次会被拒（不叠加第二次运行）', async () => {
     const project = await seedProject()
     const { ctx } = makeCtx({ finalText: '' })
@@ -271,7 +327,7 @@ describe('Runner', () => {
     expect(after?.qa).toHaveLength(1)
     expect(after?.qa[0]?.question).toContain('路由注册失败')
     const allow = scope.tools.restrict.mock.calls[0]?.[0] as { allow: string[] }
-    expect(allow.allow).toEqual(['read', 'glob', 'grep', 'skill'])
+    expect(allow.allow).toEqual(['read', 'glob', 'grep', 'skill', 'todo_write'])
     expect(allow.allow).not.toContain('bash')
   })
 })

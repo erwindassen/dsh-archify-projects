@@ -4,7 +4,16 @@
  * host 与 client 共用；改这里等于改接口契约，两侧同时失配会立刻被类型检查抓到。
  */
 
-import type { Concept, DiagramKind, Persistence, Project, QaEntry, RunKind } from './types.js'
+import type { Pricing } from './format.js'
+import type {
+  ArchifyType,
+  Concept,
+  DiagramKind,
+  Persistence,
+  Project,
+  QaEntry,
+  RunKind,
+} from './types.js'
 
 /** 所有路由的前缀。 */
 export const ROUTE_PREFIX = '/dsh-archify-projects'
@@ -83,6 +92,8 @@ export interface ProjectValue {
 export interface ProjectsValue {
   readonly projects: readonly Project[]
   readonly workspacePath: string
+  /** token 单价；null 表示页面只显示 token，不估算费用。 */
+  readonly pricing: Pricing | null
 }
 
 /** PATCH /projects/:id */
@@ -130,6 +141,10 @@ export interface CreateDiagramRequest {
   readonly parentId?: string | null
   readonly setId?: string | null
   readonly conceptIds?: readonly string[]
+  /** archify 渲染器；不传 = 由 agent 判断。 */
+  readonly renderer?: ArchifyType | null
+  /** 限定取证的目录（相对仓库根）；不传 = 全仓库。 */
+  readonly pathScope?: readonly string[]
   /** 建完立刻跑；默认 true。 */
   readonly run?: boolean
 }
@@ -140,6 +155,8 @@ export interface PatchDiagramRequest {
   readonly prompt?: string
   readonly persistence?: Persistence
   readonly conceptIds?: readonly string[]
+  readonly renderer?: ArchifyType | null
+  readonly pathScope?: readonly string[]
 }
 
 /** POST .../diagrams/:diagramId/ask */

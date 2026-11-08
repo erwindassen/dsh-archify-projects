@@ -147,6 +147,19 @@ export interface ScopedAgentCtx {
 }
 
 /** `ctx.agents`（`@deepseek-ai/dsh-agent`）。 */
+/**
+ * `ctx.sessionProjections` 的只读面。
+ *
+ * 宿主用它把「log 派生的会话状态」（todos / tokenUsage）端给客户端；这里只用
+ * `snapshot()` 同步读一份，缺失或形状不对都按「没有」处理。
+ */
+export interface SessionProjectionsLike {
+  snapshot(
+    session: unknown,
+    keys?: readonly string[],
+  ): { readonly values?: Readonly<Record<string, unknown>> }
+}
+
 export interface AgentLike {
   readonly id?: string
   readonly ctx?: ScopedAgentCtx
@@ -185,6 +198,7 @@ export interface HostContext {
   logger: LoggerLike
   webServer: WebServerLike
   workspaceRegistry?: WorkspaceRegistryLike
+  sessionProjections?: SessionProjectionsLike
   sessionController?: SessionControllerLike
   agents?: AgentsLike
   skills?: SkillsLike

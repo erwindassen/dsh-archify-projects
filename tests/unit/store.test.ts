@@ -13,7 +13,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { beforeEach, describe, expect, test } from 'vitest'
 import { ProjectStore } from '../../src/host/store.js'
-import { emptyGitSnapshot, type Project } from '../../src/shared/types.js'
+import { createProject, emptyGitSnapshot, type Project } from '../../src/shared/types.js'
 
 let dir = ''
 
@@ -27,36 +27,13 @@ function file(name = 'projects.json'): string {
 
 function sampleProject(id = 'prj_1'): Project {
   const now = '2026-11-06T12:00:00.000Z'
-  return {
+  return createProject({
     id,
     name: 'Demo',
     repoPath: 'D:/repo',
-    createdAt: now,
-    updatedAt: now,
+    now,
     git: emptyGitSnapshot(now),
-    diagrams: {
-      structure: {
-        status: 'idle',
-        htmlPath: null,
-        specPath: null,
-        generatedAt: null,
-        branch: null,
-        commit: null,
-        error: null,
-      },
-      domain: {
-        status: 'idle',
-        htmlPath: null,
-        specPath: null,
-        generatedAt: null,
-        branch: null,
-        commit: null,
-        error: null,
-      },
-    },
-    lastRun: null,
-    runs: [],
-  }
+  })
 }
 
 describe('ProjectStore', () => {
@@ -131,5 +108,75 @@ describe('ProjectStore', () => {
     const project = await store.get('prj_x')
     // 缺 id/name/repoPath 的项目没有可用身份，归一化时被丢弃
     expect(project).toBeUndefined()
+  })
+
+  describe('v1 台账迁移', () => {
+    test('老形状（只有两张图、没有 renderer/usage）读进来可用', async () => {
+      const legacy = {
+        version: 1,
+        updatedAt: '2026-11-06T12:00:00.000Z',
+        projects: [
+          {
+            id: 'prj_old',
+            name: 'Old',
+            repoPath: '/repo',
+            createdAt: '2026-11-06T12:00:00.000Z',
+            updatedAt: '2026-11-06T12:00:00.000Z',
+            git: { ...emptyGitSnapshot('2026-11-06T12:00:00.000Z'), isRepo: true, branch: 'main' },
+            diagrams: {
+              structure: { status: 'ready', htmlPath: 'a.html', specPath: 'a.json' },
+              domain: { status: 'idle' },
+            },
+            lastRun: null,
+            runs: [],
+          },
+        ],
+      }
+      await writeFile(file(), JSON.stringify(legacy), 'utf8')
+      const store = new ProjectStore(file())
+      const project = await store.get('prj_old')
+      expect(project?.diagrams.structure.status).toBe('ready')
+      expect(project?.custom).toEqual([])
+      expect(project?.concepts).toEqual([])
+      expect(project?.qa).toEqual([])
+      expect(project?.usageTotal).toBe(0)
+      // 默认两张图的渲染器是 architecture（archify 的 type），不是 null
+      expect(project?.diagrams.structure.renderer).toBe('architecture')
+    })
+
+    test('运行记录里的 todos/usage 会被归一化', async () => {
+      const project = sampleProject('prj_runs')
+      const withRun: Project = {
+        ...project,
+        usageTotal: 1234,
+        runs: [
+          {
+            id: 'run_1',
+            kind: 'update',
+            status: 'succeeded',
+            sessionId: 's1',
+            startedAt: '2026-11-06T12:00:00.000Z',
+            finishedAt: '2026-11-06T12:30:00.000Z',
+            error: null,
+            note: null,
+            diagramIds: ['structure'],
+            todos: [
+              { content: '读代码', status: 'completed' },
+              { content: '出图', status: 'in_progress' },
+            ],
+            usage: { uncachedInput: 100, output: 20, cacheRead: 5, cacheWrite: 0 },
+          },
+        ],
+      }
+      const store = new ProjectStore(file())
+      await store.upsert(withRun)
+      const reloaded = await store.get('prj_runs')
+      expect(reloaded?.usageTotal).toBe(1234)
+      expect(reloaded?.runs[0]?.todos.map((todo) => todo.status)).toEqual([
+        'completed',
+        'in_progress',
+      ])
+      expect(reloaded?.runs[0]?.usage?.output).toBe(20)
+    })
   })
 })

@@ -7,7 +7,13 @@
 
 import { useMemo, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
-import type { Concept, Persistence, Project } from '../shared/types.js'
+import {
+  ARCHIFY_TYPES,
+  type ArchifyType,
+  type Concept,
+  type Persistence,
+  type Project,
+} from '../shared/types.js'
 import type { Translate } from './panel.js'
 
 /** 运行记录里的时钟：按本地时区显示 HH:mm:ss。 */
@@ -126,6 +132,27 @@ export interface DiagramDraft {
   readonly persistence: Persistence
   readonly parentId: string | null
   readonly conceptIds: readonly string[]
+  readonly renderer: ArchifyType | null
+  readonly pathScope: readonly string[]
+}
+
+/** 从概念证据里推几个目录候选，够弹窗做「目录范围」。 */
+export function scopeOptions(project: Project): readonly string[] {
+  const dirs = new Set<string>()
+  for (const concept of project.concepts) {
+    for (const evidence of concept.evidence) {
+      const parts = evidence.split('/').filter((part) => part.length > 0)
+      if (parts.length === 0) continue
+      const top = parts[0] as string
+      dirs.add(
+        parts.length >= 2 && (top === 'src' || top === 'packages' || top === 'apps')
+          ? `${top}/${parts[1] as string}`
+          : top,
+      )
+    }
+  }
+  const out = [...dirs].slice(0, 8)
+  return out.length > 0 ? out : ['src']
 }
 
 /** 新建图对话框。 */
@@ -144,24 +171,31 @@ export function NewDiagramDialog({
   onClose: () => void
   onSubmit: (draft: DiagramDraft) => void
 }): ReactElement {
-  const [title, setTitle] = useState('')
   const [prompt, setPrompt] = useState('')
   const [persistence, setPersistence] = useState<Persistence>('permanent')
   const [underCurrent, setUnderCurrent] = useState(selectedId !== null)
   const [chosen, setChosen] = useState<readonly string[]>([])
+  const [renderer, setRenderer] = useState<ArchifyType | null>(null)
+  const [pathScope, setPathScope] = useState<readonly string[]>([])
   const concepts = useMemo(() => project.concepts.slice(0, 24), [project.concepts])
+  const scopes = useMemo(() => scopeOptions(project), [project])
 
-  const toggle = (id: string): void => {
+  const toggleConcept = (id: string): void => {
     setChosen((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]))
+  }
+  const toggleScope = (dir: string): void => {
+    setPathScope((prev) => (prev.includes(dir) ? prev.filter((x) => x !== dir) : [...prev, dir]))
   }
 
   const submit = (): void => {
     onSubmit({
-      title: title.trim().length > 0 ? title.trim() : prompt.trim().slice(0, 24),
+      title: prompt.trim().slice(0, 24),
       prompt: prompt.trim(),
       persistence,
       parentId: underCurrent && selectedId !== null ? selectedId : null,
       conceptIds: chosen,
+      renderer,
+      pathScope,
     })
   }
 
@@ -172,7 +206,7 @@ export function NewDiagramDialog({
       onClick={(e) => e.target === e.currentTarget && onClose()}
     >
       <div
-        className="dap-dialog"
+        className="dap-dialog dap-dialog--wide"
         role="dialog"
         aria-modal="true"
         aria-label={t('dialog.newDiagram')}
@@ -180,24 +214,109 @@ export function NewDiagramDialog({
         <h2 className="dap-dialog__title">{t('dialog.newDiagram')}</h2>
         <p className="dap-dialog__sub">{t('dialog.newDiagramSub')}</p>
 
-        <div className="dap-field">
-          <span className="dap-field__label">{t('field.title')}</span>
-          <input
-            className="dap-input"
-            value={title}
-            placeholder={t('field.titlePlaceholder')}
-            onChange={(e) => setTitle(e.target.value)}
-          />
+        <div className="dap-dialog__row" style={{ marginBottom: 4 }}>
+          <span className="dap-field__label">{t('field.renderer')}</span>
+          <span className="dap-hint">{t('field.rendererHint')}</span>
+        </div>
+        <div className="dap-typebar">
+          <button
+            className={renderer === null ? 'dap-type-tag dap-type-tag--on' : 'dap-type-tag'}
+            onClick={() => setRenderer(null)}
+          >
+            {t('renderer.auto')} <span className="dap-type-tag__k">agent</span>
+          </button>
+          {ARCHIFY_TYPES.map((kind) => (
+            <button
+              key={kind}
+              className={renderer === kind ? 'dap-type-tag dap-type-tag--on' : 'dap-type-tag'}
+              onClick={() => setRenderer(kind)}
+            >
+              {t(`renderer.${kind}`)} <span className="dap-type-tag__k">{kind}</span>
+            </button>
+          ))}
+        </div>
+        <div className="dap-type-detail">
+          {renderer === null ? (
+            <div className="dap-type-detail__empty">{t('renderer.autoHint')}</div>
+          ) : (
+            <>
+              <div className="dap-type-detail__head">
+                <b>{t(`renderer.${renderer}`)}</b>
+                <code>{renderer}</code>
+              </div>
+              <div className="dap-type-detail__row">
+                <span>{t('renderer.fit')}</span>
+                <p>{t(`renderer.${renderer}.fit`)}</p>
+              </div>
+              <div className="dap-type-detail__row">
+                <span>{t('renderer.show')}</span>
+                <p>{t(`renderer.${renderer}.show`)}</p>
+              </div>
+              <div className="dap-type-detail__row">
+                <span>{t('renderer.grasp')}</span>
+                <p>{t(`renderer.${renderer}.grasp`)}</p>
+              </div>
+            </>
+          )}
         </div>
 
-        <div className="dap-field" style={{ marginTop: 8 }}>
+        <div className="dap-field" style={{ marginTop: 10 }}>
           <span className="dap-field__label">{t('field.prompt')}</span>
           <textarea
             className="dap-textarea"
             value={prompt}
-            placeholder={t('field.promptPlaceholder')}
+            placeholder={
+              renderer === null
+                ? t('field.promptPlaceholder')
+                : `${t(`renderer.${renderer}`)}：${t('field.promptPlaceholder')}`
+            }
             onChange={(e) => setPrompt(e.target.value)}
           />
+        </div>
+
+        <div className="dap-dialog__row" style={{ alignItems: 'flex-start' }}>
+          <span className="dap-field__label" style={{ flex: 'none' }}>
+            {t('field.concepts')}
+          </span>
+          <div>
+            <div className="dap-concepts">
+              {concepts.map((concept: Concept) => (
+                <button
+                  key={concept.id}
+                  className={
+                    chosen.includes(concept.id) ? 'dap-concept dap-concept--on' : 'dap-concept'
+                  }
+                  onClick={() => toggleConcept(concept.id)}
+                  title={concept.summary}
+                >
+                  {concept.name}
+                </button>
+              ))}
+            </div>
+            <p className="dap-hint">{t('scope.conceptHint')}</p>
+          </div>
+        </div>
+
+        <div className="dap-dialog__row" style={{ alignItems: 'flex-start' }}>
+          <span className="dap-field__label" style={{ flex: 'none' }}>
+            {t('field.pathScope')}
+          </span>
+          <div>
+            <div className="dap-concepts">
+              {scopes.map((dir) => (
+                <button
+                  key={dir}
+                  className={
+                    pathScope.includes(dir) ? 'dap-concept dap-concept--on' : 'dap-concept'
+                  }
+                  onClick={() => toggleScope(dir)}
+                >
+                  {dir}
+                </button>
+              ))}
+            </div>
+            <p className="dap-hint">{t('scope.pathHint')}</p>
+          </div>
         </div>
 
         <div className="dap-dialog__row">
@@ -245,26 +364,6 @@ export function NewDiagramDialog({
             </button>
           </div>
         </div>
-
-        {concepts.length > 0 ? (
-          <div className="dap-field" style={{ marginTop: 4 }}>
-            <span className="dap-field__label">{t('field.concepts')}</span>
-            <div className="dap-concepts">
-              {concepts.map((concept: Concept) => (
-                <button
-                  key={concept.id}
-                  className={
-                    chosen.includes(concept.id) ? 'dap-concept dap-concept--on' : 'dap-concept'
-                  }
-                  onClick={() => toggle(concept.id)}
-                  title={concept.summary}
-                >
-                  {concept.name}
-                </button>
-              ))}
-            </div>
-          </div>
-        ) : null}
 
         <div className="dap-dialog__foot">
           <span className="dap-hint">{t('qa.mergeHint')}</span>

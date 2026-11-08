@@ -65,7 +65,7 @@ describe('健康检查与列表', () => {
     const res = await call('/dsh-archify-projects/projects')
     expect(res.json()).toEqual({
       ok: true,
-      value: { projects: [], workspacePath: workspaceRoot(state.config) },
+      value: { projects: [], workspacePath: workspaceRoot(state.config), pricing: null },
     })
   })
 
@@ -241,6 +241,34 @@ describe('自定义图与问答', () => {
     expect(project?.custom[0]?.prompt).toBe('画调用链')
     expect(project?.custom[0]?.persistence).toBe('temporary')
     expect(state.runner.start).toHaveBeenCalledTimes(1)
+  })
+
+  test('新建自定义图：渲染器与目录范围落库，越界目录被拒', async () => {
+    await seed()
+    const res = await call('/dsh-archify-projects/projects/prj_1/diagrams', {
+      method: 'POST',
+      body: JSON.stringify({
+        title: '调用链',
+        prompt: '画调用链',
+        renderer: 'sequence',
+        pathScope: ['src/host/', '../etc', '/abs/path', 'src/client', 'src/host'],
+      }),
+    })
+    expect(res.status).toBe(200)
+    const project = await state.store.get('prj_1')
+    expect(project?.custom[0]?.renderer).toBe('sequence')
+    // 只留仓库内的相对目录，去重、去尾斜杠
+    expect(project?.custom[0]?.pathScope).toEqual(['src/host', 'src/client'])
+  })
+
+  test('非法渲染器回落成 null（由 agent 判断）', async () => {
+    await seed()
+    await call('/dsh-archify-projects/projects/prj_1/diagrams', {
+      method: 'POST',
+      body: JSON.stringify({ title: 'x', prompt: 'p', renderer: 'mindmap' }),
+    })
+    const project = await state.store.get('prj_1')
+    expect(project?.custom[0]?.renderer).toBeNull()
   })
 
   test('PATCH 改时效，DELETE 删图', async () => {

@@ -22,7 +22,7 @@ DSH 的左栏插件「架构建模」：把一个代码库登记进台账，用*
 | 方面   | 状态                                                                                                                                                          |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 功能   | 新增/删除项目、Git 探测（分支/commit/上游/脏）、首次生成、更新（切分支+快进+重跑）、重新生成单图、运行记录、深/浅色、非 Git 目录、iframe 内嵌预览、新窗口打开 |
-| 测试   | 160 个用例 / 12 个文件，`vitest` 全绿（约 2 s）                                                                                                               |
+| 测试   | 173 个用例 / 12 个文件，`vitest` 全绿（约 2 s）                                                                                                               |
 | 静态门 | `tsc`（两份 tsconfig）、`eslint`、`prettier --check`、`dependency-cruiser`、`artifact:check`（51.5 KB / 220 KB 预算）全绿                                     |
 | 真机   | 在 `127.0.0.1:3080` 的真实宿主里跑通过「Git 项目」与「非 Git 目录」两条路径，深浅色都验过；截图见 [`docs/verify/`](./verify)                                  |
 | 产物   | `~/.dsh/dsh-archify-projects/` 下 1 个项目（`dsh-word-learn`），两张图 ready                                                                                  |
@@ -195,7 +195,7 @@ pnpm artifact:check # dist/client.js 体积与外部化
 pnpm verify         # 以上全部 + build
 ```
 
-当前基线：**160 passed / 12 files**，`coverage` 目录不进版本库。
+当前基线：**173 passed / 12 files**，`coverage` 目录不进版本库。
 
 测试布局（改哪儿补哪儿）：
 
@@ -348,3 +348,38 @@ DiagramState {
 中「查看器」（iframe + 子图缩略条）、右「检查器」（图信息 / 提问）。
 总览是项目卡片墙（分支、工作区计数、概念数、过期提示）。样式仍只用 DSH token，
 单 bundle 81.6 KB（预算 220 KB）。
+
+### 12.6 v0.5/v0.6 增量（2026-11-08）
+
+**新建图弹窗的图型 tag**（`docs/DESIGN.md` §15）：
+
+- `DiagramState` 增 `renderer: ArchifyType | null` 与 `pathScope: string[]`；
+  `ArchifyType` = archify 的 5 个真实 type（architecture / workflow / sequence / dataflow / lifecycle）。
+- 默认两张图 `renderer` 固定 `architecture`（老台账迁移时补这个默认值）；自定义图不选即 `null`，
+  提示词写「由你按 prompt 自行选择」。
+- `pathScope` 只接受仓库内相对路径：绝对路径、`..`、反斜杠一律丢弃（`sanitizeScope`）。
+- 提示词：选了 renderer 写死「必须使用 \`<type>\`」；有 pathScope 写「只看这些目录」。
+
+**进度（todo）**：
+
+- 两个 preset 都挂 `dsh-tool-todo`（`allowParallelInProgress: false`）；
+- ⚠️ **`todo_write` 必须写进 `policy.ts` 的白名单**：`tools.restrict({allow})` 按名字收口，
+  漏掉它模型会直接说「I don't have a todo_write tool」，页面也就没有进度（踩过一次）；
+- 提示词第 0 条硬约束：开工先 `todo_write` 拆 4–7 步，每步更新；
+- runner 运行/提问期间每 3s 读 `todos` projection 写台账（`RunRecord.todos` / `QaEntry.todos`）。
+
+**用量（token）**：
+
+- runner 结束时读 `tokenUsage` projection（`uncachedInputTokens / outputTokens / cacheReadTokens /
+cacheWriteTokens`）写 `RunRecord.usage`、`QaEntry.usage`，并累加 `Project.usageTotal`；
+- 全 0 的用量记成 `null`（首轮就报错的调用不该留一条「0 tokens」）；
+- 费用是**估算**：`config.pricing = {inputPerMTok, outputPerMTok, cacheReadPerMTok}`，
+  不配就只显示 token；页面文案永远带 `≈`。
+
+**布局**：工作台整屏三栏（`dap-scroll--wb` + 三栏各自 `overflow:auto`），
+右栏再长也不撑高页面；提问输入框 sticky 在栏底。实测 `document.body.scrollHeight == clientHeight`，
+检查器内部 `scrollHeight 7803 / clientHeight 552`。
+
+**容器模型口径**：宿主默认模型切到 `zifei`（自费网关）后，容器的 `self` 路由
+（`192.168.1.4:31783`）`/v1/responses` 返回 404；`dsh-docker` 的 profile patch 与 `.env`
+已同步加 `zifei` + `ZIFEI_API_KEY`。换网关时记得两边一起改。

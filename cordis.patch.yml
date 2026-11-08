@@ -46,6 +46,11 @@
             disabled: !!js process.platform !== 'win32'
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
+          # 进度可见：agent 必须先建 todo，页面据此显示当前步骤
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: false
           - id: archify-skill
             name: '@deepseek-ai/dsh-skill-filesystem'
             config:
@@ -81,6 +86,11 @@
               sampleOverCapGlobResults: true
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
+          # 进度可见：agent 必须先建 todo，页面据此显示当前步骤
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: false
           - id: archify-skill-ask
             name: '@deepseek-ai/dsh-skill-filesystem'
             config:

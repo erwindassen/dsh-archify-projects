@@ -7,6 +7,7 @@
 
 import os from 'node:os'
 import path from 'node:path'
+import type { Pricing } from '../shared/format.js'
 
 /** 宿主 profile 传入的原始配置（YAML 反序列化结果，什么都可能是）。 */
 export interface RawPluginConfig {
@@ -17,6 +18,7 @@ export interface RawPluginConfig {
   readonly runTimeoutMs?: unknown
   readonly askTimeoutMs?: unknown
   readonly keepRuns?: unknown
+  readonly pricing?: unknown
 }
 
 /** 解析后的配置。 */
@@ -35,6 +37,8 @@ export interface ResolvedConfig {
   readonly askTimeoutMs: number
   /** 每个项目保留的运行记录条数。 */
   readonly keepRuns: number
+  /** token 单价（每百万 token）；null 表示页面只显示 token，不算钱。 */
+  readonly pricing: Pricing | null
 }
 
 /** DSH 配置根。 */
@@ -73,6 +77,7 @@ export function resolveConfig(
     runTimeoutMs: readPositiveInt(raw?.runTimeoutMs, 20 * 60 * 1000, 'runTimeoutMs', warnings),
     askTimeoutMs: readPositiveInt(raw?.askTimeoutMs, 6 * 60 * 1000, 'askTimeoutMs', warnings),
     keepRuns: readPositiveInt(raw?.keepRuns, 20, 'keepRuns', warnings),
+    pricing: readPricing(raw?.pricing, warnings),
   }
 }
 
@@ -98,6 +103,28 @@ function readPositiveInt(
     return fallback
   }
   return n
+}
+
+/** 读单价配置；三个字段都必须是非负数，否则整块作废。 */
+function readPricing(value: unknown, warnings: string[]): Pricing | null {
+  if (value === undefined || value === null) return null
+  if (typeof value !== 'object') {
+    warnings.push('配置项 pricing 不是对象，已忽略（页面只显示 token）')
+    return null
+  }
+  const raw = value as Record<string, unknown>
+  const read = (key: string): number | null => {
+    const n = Number(raw[key])
+    return Number.isFinite(n) && n >= 0 ? n : null
+  }
+  const inputPerMTok = read('inputPerMTok')
+  const outputPerMTok = read('outputPerMTok')
+  const cacheReadPerMTok = read('cacheReadPerMTok')
+  if (inputPerMTok === null || outputPerMTok === null || cacheReadPerMTok === null) {
+    warnings.push('配置项 pricing 缺字段或不是非负数，已忽略（页面只显示 token）')
+    return null
+  }
+  return { inputPerMTok, outputPerMTok, cacheReadPerMTok }
 }
 
 /** 台账文件的绝对路径。 */

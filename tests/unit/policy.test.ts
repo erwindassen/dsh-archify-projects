@@ -7,7 +7,12 @@
  */
 
 import { describe, expect, test, vi } from 'vitest'
-import { allowedToolNames, makeGuard, tightenAgent } from '../../src/host/policy.js'
+import {
+  allowedToolNames,
+  makeGuard,
+  readonlyToolNames,
+  tightenAgent,
+} from '../../src/host/policy.js'
 import type { ToolsLike } from '../../src/host/context.js'
 
 describe('allowedToolNames', () => {
@@ -19,9 +24,14 @@ describe('allowedToolNames', () => {
   })
 
   test('不含会破坏只读出图语义的工具', () => {
-    for (const forbidden of ['web_search', 'subagent', 'workflow', 'present', 'todo_write']) {
+    for (const forbidden of ['web_search', 'subagent', 'workflow', 'present']) {
       expect(allowedToolNames('win32')).not.toContain(forbidden)
     }
+  })
+
+  test('todo_write 必须在白名单里，否则模型看不到它、页面没有进度', () => {
+    expect(allowedToolNames('linux')).toContain('todo_write')
+    expect(readonlyToolNames()).toContain('todo_write')
   })
 })
 

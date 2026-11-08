@@ -30,6 +30,8 @@ import {
   defaultProjectName,
   findDiagram,
   runnableDiagrams,
+  ARCHIFY_TYPES,
+  type ArchifyType,
   type DiagramState,
   type GitSnapshot,
   type Persistence,
@@ -224,7 +226,11 @@ async function handleList(
   res: import('./context.js').WebResponse,
 ): Promise<void> {
   const projects = await state.store.list()
-  const value: ProjectsValue = { projects, workspacePath: workspaceRoot(state.config) }
+  const value: ProjectsValue = {
+    projects,
+    workspacePath: workspaceRoot(state.config),
+    pricing: state.config.pricing,
+  }
   sendOk(res, value)
 }
 
@@ -400,6 +406,8 @@ async function handleCreateDiagram(
     throw new BadRequest('父图不存在', 'path-invalid')
   }
   const conceptIds = readStringArray(body.conceptIds)
+  const renderer = parseRenderer(body.renderer)
+  const pathScope = sanitizeScope(body.pathScope)
   const now = new Date().toISOString()
   const diagram: DiagramState = {
     id: newDiagramId(),
@@ -410,6 +418,8 @@ async function handleCreateDiagram(
     parentId,
     setId: optionalString(body.setId ?? null) ?? parentId,
     conceptIds,
+    renderer,
+    pathScope,
     status: 'idle',
     htmlPath: null,
     specPath: null,
@@ -666,6 +676,8 @@ async function handleChildQa(
     parentId: parent.id,
     setId: parent.setId ?? parent.id,
     conceptIds: parent.conceptIds,
+    renderer: parent.renderer,
+    pathScope: parent.pathScope,
     status: 'idle',
     htmlPath: null,
     specPath: null,
@@ -800,6 +812,27 @@ function optionalString(value: unknown): string | null {
   if (typeof value !== 'string') return null
   const trimmed = value.trim()
   return trimmed.length === 0 ? null : trimmed
+}
+
+function parseRenderer(value: unknown): ArchifyType | null {
+  return typeof value === 'string' && (ARCHIFY_TYPES as readonly string[]).includes(value)
+    ? (value as ArchifyType)
+    : null
+}
+
+/** 目录范围只接受仓库内的相对路径：拒绝绝对路径与 `..`。 */
+function sanitizeScope(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const out: string[] = []
+  for (const item of value) {
+    if (typeof item !== 'string') continue
+    const trimmed = item.trim().replace(/^\.\//, '').replace(/\/+$/, '')
+    if (trimmed.length === 0 || trimmed.startsWith('/') || trimmed.includes('\\')) continue
+    const parts = trimmed.split('/')
+    if (parts.some((part) => part === '..' || part === '.' || part.length === 0)) continue
+    if (!out.includes(trimmed)) out.push(trimmed)
+  }
+  return out
 }
 
 function readStringArray(value: unknown): string[] {

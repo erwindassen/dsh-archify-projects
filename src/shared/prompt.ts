@@ -11,7 +11,7 @@
  */
 
 import { ARTIFACT_MARKER } from './protocol.js'
-import type { Concept, DiagramMode, GitSnapshot, Persistence } from './types.js'
+import type { ArchifyType, Concept, DiagramMode, GitSnapshot, Persistence } from './types.js'
 
 /** 一次出图要交付的一张图。 */
 export interface PromptDiagram {
@@ -21,6 +21,8 @@ export interface PromptDiagram {
   readonly prompt: string | null
   readonly persistence: Persistence
   readonly conceptIds: readonly string[]
+  readonly renderer: ArchifyType | null
+  readonly pathScope: readonly string[]
 }
 
 /** 构建出图提示词需要的全部事实。 */
@@ -146,14 +148,24 @@ function diagramBlock(diagram: PromptDiagram, previousBranch: string | null): st
     previousBranch === null
       ? '- 这张图以前没生成过。'
       : `- 上一版生成于分支 \`${previousBranch}\`，本次请基于当前代码重新取证，不要沿用旧结论。`
+  const renderer =
+    diagram.renderer === null
+      ? '- 渲染器：由你按 prompt 自行选择（architecture / workflow / sequence / dataflow / lifecycle 之一）。'
+      : `- 渲染器：**必须使用 \`${diagram.renderer}\`**（用户已选）。`
+  const scope =
+    diagram.pathScope.length === 0
+      ? '- 取证范围：全仓库。'
+      : `- 取证范围：**只看这些目录** —— ${diagram.pathScope.map((dir) => `\`${dir}\``).join('、')}；不要读范围外的文件。`
   if (diagram.kind === 'custom') {
     return [
       head,
       `用户的出图要求（最高优先级）：\n${diagram.prompt ?? '（没有给 prompt，请按代码库最重要的结构画）'}`,
+      renderer,
+      scope,
       prev,
     ].join('\n')
   }
-  return [head, KIND_SPEC[diagram.kind], prev].join('\n')
+  return [head, KIND_SPEC[diagram.kind], renderer, scope, prev].join('\n')
 }
 
 /**
@@ -216,6 +228,7 @@ ${archifyBlock(archifySkillPath, diagrams, stamp)}
 
 ## 硬约束
 
+0. **先建 todo**：开工第一步就调用 \`todo_write\`，把这次工作拆成 4–7 步（例：读代码 → 提概念 → 每张图 candidate → finalize → 回报），之后每完成一步就更新一次；最后一步固定是「回报产物标记」。页面靠这份 todo 显示进度。
 1. **只读代码库**：可以 read / grep / glob 任意文件，可以跑只读 git 命令；不许 write / edit / 删除 / 移动代码库里的任何文件，不许切分支、不许 commit。
 2. **产物只写工作目录**：\`candidate.json\`、HTML 与 \`concepts.json\` 都落在工作目录下，不要写进代码库。
 3. 不要输出与图谱无关的总结长文；不要中途问问题，需要的信息自己去代码里查。
@@ -261,6 +274,8 @@ export function buildAskPrompt(input: AskPromptInput): string {
 - 代码库根目录：\`${repoPath}\`（只读；可以 read / grep / glob）
 - 这张图：\`${diagram.title}\`（id: \`${diagram.id}\`）
 - 图的建模要求：${diagram.prompt ?? '（默认口径）'}
+${diagram.pathScope.length === 0 ? '- 取证范围：全仓库。' : `- 取证范围：只看 ${diagram.pathScope.join('、')}，回答时不要引用范围外的文件。`}
+${diagram.pathScope.length === 0 ? '- 取证范围：全仓库。' : `- 取证范围：只看 ${diagram.pathScope.join('、')}，回答时不要引用范围外的文件。`}
 
 ## 这张图已绑定的概念
 
@@ -278,6 +293,7 @@ ${question}
 
 ## 回答要求
 
+0. **先建 todo**：开工第一步调用 \`todo_write\`，把这次回答拆成 3–5 步（例：看图的产物 → 读相关代码 → 整理结论），每完成一步更新一次。
 1. **只看代码库和上面的图**：不要引用外部资料，不要猜没读过的文件。
 2. 先给结论（一句话），再给依据；依据要写清文件路径（相对仓库根）与关键符号/函数名。
 3. 如果代码里查不到，直接说「代码里没有找到」，不要编。

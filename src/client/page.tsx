@@ -22,11 +22,14 @@ import {
   findDiagram,
   isRunning,
   isStale,
+  usageTotalOf,
   type Concept,
   type DiagramState,
   type Project,
+  type TodoItem,
+  type TokenUsage,
 } from '../shared/types.js'
-import { relativeSpan } from '../shared/format.js'
+import { estimateCost, formatTokens, relativeSpan, type Pricing } from '../shared/format.js'
 import { api, ApiError, send } from './api.js'
 import {
   Chip,
@@ -44,9 +47,16 @@ interface PageState {
   readonly error: string | null
   readonly projects: readonly Project[]
   readonly workspacePath: string | null
+  readonly pricing: Pricing | null
 }
 
-const INITIAL: PageState = { loading: true, error: null, projects: [], workspacePath: null }
+const INITIAL: PageState = {
+  loading: true,
+  error: null,
+  projects: [],
+  workspacePath: null,
+  pricing: null,
+}
 
 /** 有任务在跑时的轮询间隔。 */
 const POLL_MS = 2500
@@ -86,6 +96,7 @@ export function StudioPage({ t }: { t: Translate }): ReactElement {
         error: null,
         projects: value.projects,
         workspacePath: value.workspacePath,
+        pricing: value.pricing ?? null,
       })
     } catch (err) {
       if (!mounted.current) return
@@ -322,7 +333,7 @@ export function StudioPage({ t }: { t: Translate }): ReactElement {
             </button>
           </div>
         </header>
-        <div className="dap-scroll">
+        <div className="dap-scroll dap-scroll--wb">
           {notice !== null ? (
             <p className={notice.error ? 'dap-notice dap-notice--error' : 'dap-notice'}>
               {notice.text}
@@ -335,6 +346,7 @@ export function StudioPage({ t }: { t: Translate }): ReactElement {
             tab={tab}
             busy={busy}
             question={question}
+            pricing={state.pricing}
             ago={ago}
             onTab={setTab}
             onQuestion={setQuestion}
@@ -531,8 +543,12 @@ function AtlasCard({
       </div>
       <div className="dap-card__foot">
         <span>
-          {project.git.branch ?? t('git.noRepo')} ·{' '}
-          {ago(diagrams.find((d) => d.generatedAt)?.generatedAt ?? null)}
+          {running
+            ? t('runbar.step', { step: activeStep(project) ?? t('runbar.unknown') })
+            : `${project.git.branch ?? t('git.noRepo')} · ${ago(
+                diagrams.find((d) => d.generatedAt)?.generatedAt ?? null,
+              )}`}
+          {project.usageTotal > 0 ? ` · ${formatTokens(project.usageTotal)} tokens` : ''}
         </span>
         <button
           className="dap-btn dap-btn--sm"
@@ -560,6 +576,7 @@ function Workbench({
   tab,
   busy,
   question,
+  pricing,
   ago,
   onTab,
   onQuestion,
@@ -577,6 +594,7 @@ function Workbench({
   tab: Tab
   busy: string | null
   question: string
+  pricing: Pricing | null
   ago: (iso: string | null) => string
   onTab: (tab: Tab) => void
   onQuestion: (value: string) => void
@@ -616,6 +634,8 @@ function Workbench({
           {t('meta.branchLevel', { branch: project.git.branch ?? '—' })}
         </span>
       </div>
+
+      <RunBar t={t} project={project} />
 
       <div className="dap-wb">
         <div className="dap-panel">
@@ -888,6 +908,14 @@ function Workbench({
                     </div>
                   </div>
                   <div className="dap-field">
+                    <span className="dap-field__label">{t('progress.title')}</span>
+                    <TodoList t={t} todos={project.lastRun?.todos ?? []} />
+                  </div>
+                  <div className="dap-field">
+                    <span className="dap-field__label">{t('usage.title')}</span>
+                    <UsageBlock t={t} project={project} pricing={pricing} />
+                  </div>
+                  <div className="dap-field">
                     <span className="dap-field__label">{t('run.history')}</span>
                     <div className="dap-hint">
                       {project.runs
@@ -1009,4 +1037,121 @@ function RailItem({
 function messageOf(err: unknown): string {
   if (err instanceof ApiError) return err.message
   return err instanceof Error ? err.message : String(err)
+}
+
+// ------------------------------------------------------------------ 进度与用量
+
+/** 运行中当前步骤；没有 todo 时返回 null。 */
+function activeStep(project: Project): string | null {
+  const todo = project.lastRun?.todos.find((item) => item.status === 'in_progress')
+  return todo?.content ?? null
+}
+
+/** 顶部运行进度条：只在有 agent 在跑时出现。 */
+function RunBar({ t, project }: { t: Translate; project: Project }): ReactElement | null {
+  const run = project.lastRun
+  const running = isRunning(project)
+  const qaRunning = project.qa.find((entry) => entry.status === 'running')
+  if (!running && qaRunning === undefined) return null
+
+  const todos = running ? (run?.todos ?? []) : (qaRunning?.todos ?? [])
+  const current = todos.find((todo) => todo.status === 'in_progress')
+  const done = todos.filter((todo) => todo.status === 'completed').length
+  const percent = todos.length === 0 ? 0 : Math.round((done / todos.length) * 100)
+  const usage = running ? (run?.usage ?? null) : (qaRunning?.usage ?? null)
+
+  return (
+    <div className="dap-runbar">
+      <span className="dap-spinner" aria-hidden="true" />
+      <b>{t('runbar.running')}</b>
+      <span className="dap-runbar__step">
+        {t('runbar.step', { step: current?.content ?? todos[0]?.content ?? t('runbar.unknown') })}
+        {todos.length > 0 ? `（${done}/${todos.length}）` : ''}
+      </span>
+      {todos.length > 0 ? (
+        <>
+          <span className="dap-runbar__bar">
+            <i style={{ width: `${percent}%` }} />
+          </span>
+          <span className="dap-runbar__pct">{percent}%</span>
+        </>
+      ) : null}
+      {usage !== null ? (
+        <span className="dap-runbar__tok">
+          {t('runbar.tokens', { n: formatTokens(usageTotalOf(usage)) })}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+/** todo 列表：✓ / spinner / ○。 */
+export function TodoList({ t, todos }: { t: Translate; todos: readonly TodoItem[] }): ReactElement {
+  if (todos.length === 0) return <p className="dap-hint">{t('progress.none')}</p>
+  return (
+    <div className="dap-todos">
+      {todos.map((todo) => (
+        <div
+          key={todo.content}
+          className={
+            todo.status === 'completed'
+              ? 'dap-todo dap-todo--done'
+              : todo.status === 'in_progress'
+                ? 'dap-todo dap-todo--now'
+                : 'dap-todo'
+          }
+        >
+          <span className="dap-todo__mark" aria-hidden="true">
+            {todo.status === 'completed' ? (
+              '✓'
+            ) : todo.status === 'in_progress' ? (
+              <span className="dap-spinner" />
+            ) : (
+              '○'
+            )}
+          </span>
+          {todo.content}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+/** 用量块：本次 / 累计 tokens，配了单价才算钱。 */
+export function UsageBlock({
+  t,
+  project,
+  pricing,
+}: {
+  t: Translate
+  project: Project
+  pricing: Pricing | null
+}): ReactElement {
+  const current: TokenUsage | null = project.lastRun?.usage ?? null
+  const cost = estimateCost(current, pricing)
+  return (
+    <div className="dap-usage">
+      <div>
+        <span>{t('usage.current')}</span>
+        <b>{formatTokens(usageTotalOf(current))}</b>
+        {cost !== null ? <em>{t('usage.estimated', { cost: cost.toFixed(3) })}</em> : null}
+      </div>
+      <div>
+        <span>{t('usage.total')}</span>
+        <b>{formatTokens(project.usageTotal)}</b>
+      </div>
+      {current !== null ? (
+        <div className="dap-usage__detail">
+          <span>
+            {t('usage.detail', {
+              input: formatTokens(current.uncachedInput),
+              cacheRead: formatTokens(current.cacheRead),
+              output: formatTokens(current.output),
+            })}
+          </span>
+        </div>
+      ) : null}
+      {pricing === null ? <span className="dap-hint">{t('usage.estimateNote')}</span> : null}
+    </div>
+  )
 }

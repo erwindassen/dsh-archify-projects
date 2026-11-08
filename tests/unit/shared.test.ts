@@ -10,7 +10,9 @@ import {
   aheadBehindText,
   archifyDirName,
   diagramTitle,
+  estimateCost,
   formatStamp,
+  formatTokens,
   gitSummary,
   relativeSpan,
   shortCommit,
@@ -33,6 +35,22 @@ describe('format', () => {
     expect(shortCommit('0123456789abcdef')).toBe('0123456')
     expect(shortCommit(null)).toBe('—')
     expect(shortCommit('')).toBe('—')
+  })
+
+  test('formatTokens 用紧凑写法', () => {
+    expect(formatTokens(0)).toBe('0')
+    expect(formatTokens(999)).toBe('999')
+    expect(formatTokens(1234)).toBe('1.2k')
+    expect(formatTokens(12_000)).toBe('12k')
+    expect(formatTokens(12_300_000)).toBe('12.3M')
+  })
+
+  test('estimateCost 按每百万 token 单价折算，没配单价就不算', () => {
+    const usage = { uncachedInput: 1_000_000, output: 500_000, cacheRead: 0, cacheWrite: 0 }
+    const pricing = { inputPerMTok: 2, outputPerMTok: 8, cacheReadPerMTok: 0.5 }
+    expect(estimateCost(usage, pricing)).toBeCloseTo(6)
+    expect(estimateCost(usage, null)).toBeNull()
+    expect(estimateCost(null, pricing)).toBeNull()
   })
 
   test('formatStamp 是本地时间戳', () => {
@@ -166,7 +184,16 @@ describe('prompt', () => {
     id: string,
     kind: 'structure' | 'domain' | 'custom',
     prompt: string | null = null,
-  ) => ({ id, kind, title: id, prompt, persistence: 'permanent' as const, conceptIds: [] })
+  ) => ({
+    id,
+    kind,
+    title: id,
+    prompt,
+    persistence: 'permanent' as const,
+    conceptIds: [],
+    renderer: null,
+    pathScope: [],
+  })
 
   const base = {
     projectName: 'Demo',
@@ -215,6 +242,34 @@ describe('prompt', () => {
     })
     expect(text).toContain('画出一次更新的调用链，标出失败分支')
     expect(text).toContain('ARCHIFY_ARTIFACT dgm_trace')
+  })
+
+  test('选了渲染器与目录范围时写死约束', () => {
+    const text = buildRunPrompt({
+      ...base,
+      git: emptyGitSnapshot('2026-11-06T12:00:00Z'),
+      diagrams: [
+        {
+          ...diagram('dgm_seq', 'custom', '画出一次更新'),
+          renderer: 'sequence',
+          pathScope: ['src/host', 'src/shared'],
+        },
+      ],
+    })
+    expect(text).toContain('必须使用 `sequence`')
+    expect(text).toContain('只看这些目录')
+    expect(text).toContain('src/host')
+    expect(text).toContain('src/shared')
+  })
+
+  test('没选渲染器时让 agent 自己判断，范围默认全仓库', () => {
+    const text = buildRunPrompt({
+      ...base,
+      git: emptyGitSnapshot('2026-11-06T12:00:00Z'),
+      diagrams: [diagram('structure', 'structure')],
+    })
+    expect(text).toContain('由你按 prompt 自行选择')
+    expect(text).toContain('取证范围：全仓库')
   })
 
   test('skill 缺失时降级说明出现，而不是空口让人去调 skill', () => {
@@ -338,6 +393,30 @@ describe('prompt', () => {
     expect(text).toContain('暂存 2')
     expect(text).toContain('未暂存 1')
     expect(text).toContain('上一版生成于分支 `dev`')
+  })
+
+  test('问答提示词带目录范围时限制引用', () => {
+    const text = buildAskPrompt({
+      projectName: 'Demo',
+      repoPath: '/work/demo',
+      diagram: { ...diagram('structure', 'structure'), pathScope: ['src/host'] },
+      concepts: [],
+      candidate: null,
+      question: '超时怎么算？',
+    })
+    expect(text).toContain('只看 src/host')
+  })
+
+  test('问答提示词未限定目录时不提限制', () => {
+    const text = buildAskPrompt({
+      projectName: 'Demo',
+      repoPath: '/work/demo',
+      diagram: diagram('structure', 'structure'),
+      concepts: [],
+      candidate: null,
+      question: '超时怎么算？',
+    })
+    expect(text).toContain('取证范围：全仓库')
   })
 
   test('没有 tree 明细但 dirty=true 时仍要提醒以工作区为准', () => {

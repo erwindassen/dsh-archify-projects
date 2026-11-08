@@ -11,6 +11,7 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import {
+  ARCHIFY_TYPES,
   LEDGER_VERSION,
   emptyGitSnapshot,
   emptyLedger,
@@ -20,6 +21,8 @@ import {
   type Project,
   type ProjectLedger,
   type QaEntry,
+  type TodoItem,
+  type TokenUsage,
   type TreeState,
 } from '../shared/types.js'
 
@@ -208,6 +211,7 @@ function normalizeProject(item: unknown): Project | null {
     qa: Array.isArray(p.qa)
       ? p.qa.map((q) => normalizeQa(q)).filter((q): q is QaEntry => q !== null)
       : [],
+    usageTotal: typeof p.usageTotal === 'number' ? p.usageTotal : 0,
     lastRun: normalizeRun(p.lastRun),
     runs: Array.isArray(p.runs)
       ? p.runs
@@ -228,6 +232,9 @@ function normalizeDiagram(value: unknown, kind: DiagramKind): DiagramState {
     parentId: typeof d.parentId === 'string' ? d.parentId : null,
     setId: typeof d.setId === 'string' ? d.setId : kind === 'structure' ? 'structure' : null,
     conceptIds: readStringArray(d.conceptIds),
+    // 默认两张图固定用 architecture 渲染；老台账没有这个字段
+    renderer: readRenderer(d.renderer) ?? 'architecture',
+    pathScope: readStringArray(d.pathScope),
     status: readStatus(d.status),
     htmlPath: typeof d.htmlPath === 'string' ? d.htmlPath : null,
     specPath: typeof d.specPath === 'string' ? d.specPath : null,
@@ -251,6 +258,8 @@ function normalizeCustomDiagram(value: unknown): DiagramState | null {
     parentId: typeof d.parentId === 'string' && d.parentId.length > 0 ? d.parentId : null,
     setId: typeof d.setId === 'string' && d.setId.length > 0 ? d.setId : null,
     conceptIds: readStringArray(d.conceptIds),
+    renderer: readRenderer(d.renderer),
+    pathScope: readStringArray(d.pathScope),
     status: readStatus(d.status),
     htmlPath: typeof d.htmlPath === 'string' ? d.htmlPath : null,
     specPath: typeof d.specPath === 'string' ? d.specPath : null,
@@ -286,6 +295,39 @@ function normalizeQa(value: unknown): QaEntry | null {
     answer: typeof q.answer === 'string' ? q.answer : '',
     at: typeof q.at === 'string' ? q.at : new Date().toISOString(),
     applied: q.applied === true,
+    status: q.status === 'running' || q.status === 'failed' ? q.status : 'done',
+    todos: normalizeTodos(q.todos),
+    usage: normalizeUsage(q.usage),
+  }
+}
+
+function normalizeTodos(value: unknown): TodoItem[] {
+  if (!Array.isArray(value)) return []
+  const out: TodoItem[] = []
+  for (const item of value) {
+    if (typeof item !== 'object' || item === null) continue
+    const raw = item as Record<string, unknown>
+    if (typeof raw.content !== 'string' || raw.content.length === 0) continue
+    const status =
+      raw.status === 'in_progress' || raw.status === 'completed' ? raw.status : 'pending'
+    out.push({ content: raw.content, status })
+  }
+  return out
+}
+
+/** 读 token 用量；任何字段缺失都按 0，整块缺失给 null。 */
+export function normalizeUsage(value: unknown): TokenUsage | null {
+  if (typeof value !== 'object' || value === null) return null
+  const raw = value as Record<string, unknown>
+  const num = (key: string): number => {
+    const n = Number(raw[key])
+    return Number.isFinite(n) && n > 0 ? n : 0
+  }
+  return {
+    uncachedInput: num('uncachedInput'),
+    output: num('output'),
+    cacheRead: num('cacheRead'),
+    cacheWrite: num('cacheWrite'),
   }
 }
 
@@ -317,6 +359,12 @@ function readStatus(value: unknown): DiagramState['status'] {
     : 'idle'
 }
 
+function readRenderer(value: unknown): DiagramState['renderer'] {
+  return typeof value === 'string' && (ARCHIFY_TYPES as readonly string[]).includes(value)
+    ? (value as DiagramState['renderer'])
+    : null
+}
+
 function readStringArray(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === 'string')
@@ -339,6 +387,8 @@ function normalizeRun(value: unknown): Project['lastRun'] {
     error: typeof r.error === 'string' ? r.error : null,
     note: typeof r.note === 'string' ? r.note : null,
     diagramIds: readStringArray(r.diagramIds),
+    todos: normalizeTodos(r.todos),
+    usage: normalizeUsage(r.usage),
   }
 }
 

@@ -17,14 +17,20 @@ import type { ScopedAgentCtx, ToolExecutionLike } from './context.js'
 /** 唯一的 skill 名。 */
 export const ARCHIFY_SKILL_NAME = 'archify'
 
-/** 基础工具白名单（不含 shell，shell 按平台补）。 */
-const BASE_ALLOW = ['read', 'write', 'edit', 'glob', 'grep', 'skill'] as const
+/**
+ * 基础工具白名单（不含 shell，shell 按平台补）。
+ *
+ * `todo_write` 必须在内：restrict 是按名字收口的，漏掉它模型就「看不到」这个工具
+ * （实测 agent 会在回复里写「I don't have a todo_write tool」），页面也就没有进度。
+ * 它只写自己的计划，不扩大任何能力面。
+ */
+const BASE_ALLOW = ['read', 'write', 'edit', 'glob', 'grep', 'skill', 'todo_write'] as const
 
 /**
  * 问答会话的白名单：只读代码 + 加载 archify（不需要出图，但保留 skill 方便看口径）。
  * 没有 shell、没有写工具 —— 用户要求「会话只剩 archify 和读代码的能力」。
  */
-const READONLY_ALLOW = ['read', 'glob', 'grep', 'skill'] as const
+const READONLY_ALLOW = ['read', 'glob', 'grep', 'skill', 'todo_write'] as const
 
 /**
  * 这个受限 agent 允许使用的工具全集。

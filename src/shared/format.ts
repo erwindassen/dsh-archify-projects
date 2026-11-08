@@ -111,6 +111,35 @@ export function latestGeneratedAt(project: Project): string | null {
   return stamps.length > 0 ? (stamps[stamps.length - 1] as string) : null
 }
 
+/** token 数的紧凑写法：1234 → 1.2k，12_345_678 → 12.3M。 */
+export function formatTokens(n: number): string {
+  if (!Number.isFinite(n) || n <= 0) return '0'
+  if (n < 1000) return String(Math.round(n))
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`
+  return `${(n / 1_000_000).toFixed(1)}M`
+}
+
+/** 费用估算：按每百万 token 的输入/输出单价（0 表示不显示）。 */
+export interface Pricing {
+  readonly inputPerMTok: number
+  readonly outputPerMTok: number
+  readonly cacheReadPerMTok: number
+}
+
+/** 估算费用（单位：货币，由配置决定是人民币还是美元）。 */
+export function estimateCost(
+  usage: { uncachedInput: number; output: number; cacheRead: number; cacheWrite: number } | null,
+  pricing: Pricing | null,
+): number | null {
+  if (usage === null || pricing === null) return null
+  const perM = 1_000_000
+  const cost =
+    (usage.uncachedInput / perM) * pricing.inputPerMTok +
+    (usage.output / perM) * pricing.outputPerMTok +
+    (usage.cacheRead / perM) * pricing.cacheReadPerMTok
+  return cost
+}
+
 /** 把绝对路径缩成「末两段」，页面里放不下全路径时用。 */
 export function tailPath(fullPath: string, segments = 2): string {
   const parts = fullPath.split(/[\\/]+/).filter((p) => p.length > 0)

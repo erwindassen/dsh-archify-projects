@@ -24,6 +24,7 @@ import {
   allDiagrams,
   DIAGRAM_KINDS,
   findDiagram,
+  usageTotalOf,
   type Concept,
   type DiagramKind,
   type DiagramState,
@@ -31,6 +32,8 @@ import {
   type RunKind,
   type RunRecord,
   type QaEntry,
+  type TodoItem,
+  type TokenUsage,
   type TreeState,
 } from '../shared/types.js'
 import { projectDir, workspaceRoot, type ResolvedConfig } from './config.js'
@@ -39,6 +42,7 @@ import {
   type AgentLike,
   type HostContext,
   type SessionControllerLike,
+  type SessionProjectionsLike,
 } from './context.js'
 import {
   allowedToolNames,
@@ -150,6 +154,8 @@ export class Runner {
       error: null,
       note: null,
       diagramIds: diagrams.map((d) => d.id),
+      todos: [],
+      usage: null,
     }
     await store.patch(project.id, (current) => ({
       ...current,
@@ -200,28 +206,55 @@ export class Runner {
       question,
     })
 
+    const qaId = `qa_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+    const createdAt = new Date().toISOString()
+    const pending: QaEntry = {
+      id: qaId,
+      diagramId: diagram.id,
+      question,
+      answer: '',
+      at: createdAt,
+      applied: false,
+      status: 'running',
+      todos: [],
+      usage: null,
+    }
+    await store.patch(project.id, (current) => ({
+      ...current,
+      updatedAt: createdAt,
+      qa: [...current.qa, pending],
+    }))
+
     const run = (async (): Promise<AskResult> => {
+      const { ctx } = this.deps
       const sessionId = await this.openSession(workspaceDir, prompt, 'ask')
-      const agent = agentOf(this.deps.ctx, sessionId)
-      const text =
-        agent === undefined
-          ? ''
-          : await withTimeout(agent.whenIdle(), config.askTimeoutMs).then(() =>
-              readFinalText(agent),
-            )
-      const entry: QaEntry = {
-        id: `qa_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`,
-        diagramId: diagram.id,
-        question,
-        answer: text.length > 0 ? text : '（这次提问没有拿到回答：会话结束时没有 assistant 文本）',
-        at: new Date().toISOString(),
-        applied: false,
+      const agent = agentOf(ctx, sessionId)
+      let stop = (): void => {}
+      let text = ''
+      let usage: TokenUsage | null = null
+      try {
+        if (agent !== undefined) {
+          stop = this.watchQaTodos(project.id, qaId, agent)
+          await withTimeout(agent.whenIdle(), config.askTimeoutMs)
+          text = readFinalText(agent)
+          usage = usageOf(ctx, agent)
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        const failed = await this.finishQa(project.id, qaId, {
+          answer: `（提问失败：${message}）`,
+          status: 'failed',
+          usage,
+        })
+        return { sessionId, entry: failed }
+      } finally {
+        stop()
       }
-      await store.patch(project.id, (current) => ({
-        ...current,
-        updatedAt: entry.at,
-        qa: [...current.qa, entry],
-      }))
+      const entry = await this.finishQa(project.id, qaId, {
+        answer: text.length > 0 ? text : '（这次提问没有拿到回答：会话结束时没有 assistant 文本）',
+        status: 'done',
+        usage,
+      })
       return { sessionId, entry }
     })()
 
@@ -324,6 +357,102 @@ export class Runner {
     tightenAgent(agent.ctx, allow, warn)
   }
 
+  /** 问答会话期间盯 todo，写到 qa 条目上，页面才能看到进度。 */
+  private watchQaTodos(projectId: string, qaId: string, agent: AgentLike): () => void {
+    const { ctx, store } = this.deps
+    let stopped = false
+    let last = ''
+    const tick = async (): Promise<void> => {
+      if (stopped) return
+      const todos = todosOf(ctx, agent)
+      if (todos === null) return
+      const signature = todos.map((todo) => `${todo.status}:${todo.content}`).join('|')
+      if (signature === last) return
+      last = signature
+      await store
+        .patch(projectId, (current) => ({
+          ...current,
+          qa: current.qa.map((entry) => (entry.id === qaId ? { ...entry, todos } : entry)),
+        }))
+        .catch(() => undefined)
+    }
+    void tick()
+    const timer = setInterval(() => void tick(), 3000)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  }
+
+  /** 收尾一条提问：写回答、状态与用量，并把用量并进项目累计。 */
+  private async finishQa(
+    projectId: string,
+    qaId: string,
+    outcome: { answer: string; status: 'done' | 'failed'; usage: TokenUsage | null },
+  ): Promise<QaEntry> {
+    const { store } = this.deps
+    const now = new Date().toISOString()
+    let saved: QaEntry | undefined
+    await store.patch(projectId, (current) => ({
+      ...current,
+      updatedAt: now,
+      usageTotal: current.usageTotal + usageTotalOf(outcome.usage),
+      qa: current.qa.map((entry) => {
+        if (entry.id !== qaId) return entry
+        saved = {
+          ...entry,
+          at: now,
+          answer: outcome.answer,
+          status: outcome.status,
+          usage: outcome.usage,
+        }
+        return saved
+      }),
+    }))
+    return (
+      saved ?? {
+        id: qaId,
+        diagramId: '',
+        question: '',
+        answer: outcome.answer,
+        at: now,
+        applied: false,
+        status: outcome.status,
+        todos: [],
+        usage: outcome.usage,
+      }
+    )
+  }
+
+  /**
+   * 运行期间盯 todo：每 3 秒读一次 `todos` projection 写进台账。
+   *
+   * 页面靠这份快照显示「正在：<当前步骤>」；读不到（宿主没挂 projection 或 agent
+   * 还没写 todo）就什么都不做，不制造假进度。
+   */
+  private watchTodos(projectId: string, runId: string, agent: AgentLike): () => void {
+    const { ctx, store } = this.deps
+    let stopped = false
+    let last = ''
+    const tick = async (): Promise<void> => {
+      if (stopped) return
+      const todos = todosOf(ctx, agent)
+      if (todos === null) return
+      const signature = todos.map((todo) => `${todo.status}:${todo.content}`).join('|')
+      if (signature === last) return
+      last = signature
+      await store
+        .patch(projectId, (current) => patchRunTodos(current, runId, todos))
+        .catch(() => undefined)
+    }
+    void tick()
+    const timer = setInterval(() => void tick(), 3000)
+    return () => {
+      stopped = true
+      clearInterval(timer)
+    }
+  }
+
   /** 后台等待结束并回收产物/概念。 */
   private follow(projectId: string, runId: string, diagramIds: readonly string[]): Promise<void> {
     const run = async (): Promise<void> => {
@@ -335,17 +464,25 @@ export class Runner {
         await this.fail(projectId, runId, '会话没有 id，无法跟踪运行')
         return
       }
+      const agent = agentOf(ctx, sessionId)
+      const stop = agent === undefined ? () => {} : this.watchTodos(projectId, runId, agent)
       try {
-        const agent = agentOf(ctx, sessionId)
         if (agent === undefined) throw new RunnerUnavailable('会话已不在运行中，无法等待结果')
         await withTimeout(agent.whenIdle(), config.runTimeoutMs)
         const text = readFinalText(agent)
         const markers = parseArtifactMarkers(text)
         const found = await this.collectArtifacts(projectId, markers, diagramIds)
         const concepts = await readConcepts(config, projectId)
-        await this.succeed(projectId, runId, found, diagramIds, concepts)
+        await this.succeed(projectId, runId, found, diagramIds, concepts, usageOf(ctx, agent))
       } catch (err) {
-        await this.fail(projectId, runId, err instanceof Error ? err.message : String(err))
+        await this.fail(
+          projectId,
+          runId,
+          err instanceof Error ? err.message : String(err),
+          usageOf(ctx, agent),
+        )
+      } finally {
+        stop()
       }
     }
     return run()
@@ -381,6 +518,7 @@ export class Runner {
     found: Map<string, string>,
     diagramIds: readonly string[],
     concepts: readonly Concept[],
+    usage: TokenUsage | null,
   ): Promise<void> {
     const { store, config } = this.deps
     const now = new Date().toISOString()
@@ -397,24 +535,33 @@ export class Runner {
             : readyDiagram(diagram, html, root, next, now)
         next = { ...next, ...replaceDiagram(next, diagram, updated) }
       }
-      const lastRun = finishRun(
-        next,
-        runId,
-        now,
-        found.size === diagramIds.length
-          ? { status: 'succeeded', error: null }
-          : { status: 'failed', error: '部分图谱没有产出' },
+      const lastRun = withUsage(
+        finishRun(
+          next,
+          runId,
+          now,
+          found.size === diagramIds.length
+            ? { status: 'succeeded', error: null }
+            : { status: 'failed', error: '部分图谱没有产出' },
+        ),
+        usage,
       )
       return {
         ...next,
         updatedAt: now,
+        usageTotal: next.usageTotal + usageTotalOf(usage),
         lastRun,
         runs: pushRun(next.runs, lastRun, config.keepRuns),
       }
     })
   }
 
-  private async fail(projectId: string, runId: string, message: string): Promise<void> {
+  private async fail(
+    projectId: string,
+    runId: string,
+    message: string,
+    usage: TokenUsage | null = null,
+  ): Promise<void> {
     const { store, config } = this.deps
     const now = new Date().toISOString()
     // 失败路径也要先看盘：agent 常常已经把自检通过的 HTML 落进 `.archify/`，
@@ -442,10 +589,14 @@ export class Runner {
           ),
         }
       }
-      const lastRun = finishRun(next, runId, now, { status: 'failed', error: message })
+      const lastRun = withUsage(
+        finishRun(next, runId, now, { status: 'failed', error: message }),
+        usage,
+      )
       return {
         ...next,
         updatedAt: now,
+        usageTotal: next.usageTotal + usageTotalOf(usage),
         lastRun,
         runs: pushRun(next.runs, lastRun, config.keepRuns),
       }
@@ -500,6 +651,8 @@ function finishRun(
       error: null,
       note: null,
       diagramIds: [],
+      todos: [],
+      usage: null,
     }
   return { ...base, status: outcome.status, finishedAt: now, error: outcome.error }
 }
@@ -520,6 +673,8 @@ function toPromptDiagram(diagram: DiagramState): PromptDiagram {
     prompt: diagram.prompt,
     persistence: diagram.persistence,
     conceptIds: diagram.conceptIds,
+    renderer: diagram.renderer,
+    pathScope: diagram.pathScope,
   }
 }
 
@@ -693,6 +848,81 @@ export function mergeConcepts(
   for (const concept of existing) byId.set(concept.id, concept)
   for (const concept of incoming) byId.set(concept.id, concept)
   return [...byId.values()]
+}
+
+/** 读一次 todos projection；没有服务或没写过 todo 时返回 null。 */
+export function todosOf(ctx: HostContext, agent: AgentLike): readonly TodoItem[] | null {
+  const session = agent.session
+  if (session === undefined || session === null) return null
+  const projections = serviceOf<SessionProjectionsLike>(ctx, 'sessionProjections')
+  if (projections === undefined) return null
+  let values: Readonly<Record<string, unknown>> | undefined
+  try {
+    values = projections.snapshot(session, ['todos']).values
+  } catch {
+    return null
+  }
+  const raw = values?.todos
+  if (!Array.isArray(raw)) return null
+  const out: TodoItem[] = []
+  for (const item of raw) {
+    if (typeof item !== 'object' || item === null) continue
+    const value = item as { content?: unknown; status?: unknown }
+    if (typeof value.content !== 'string' || value.content.length === 0) continue
+    const status =
+      value.status === 'in_progress' || value.status === 'completed' ? value.status : 'pending'
+    out.push({ content: value.content, status })
+  }
+  return out
+}
+
+/** 读一次 tokenUsage projection；没有就返回 null。 */
+export function usageOf(ctx: HostContext, agent: AgentLike | undefined): TokenUsage | null {
+  if (agent === undefined) return null
+  const session = agent.session
+  if (session === undefined || session === null) return null
+  const projections = serviceOf<SessionProjectionsLike>(ctx, 'sessionProjections')
+  if (projections === undefined) return null
+  let values: Readonly<Record<string, unknown>> | undefined
+  try {
+    values = projections.snapshot(session, ['tokenUsage']).values
+  } catch {
+    return null
+  }
+  const raw = values?.tokenUsage
+  if (typeof raw !== 'object' || raw === null) return null
+  const source = raw as Record<string, unknown>
+  const num = (key: string): number => {
+    const n = Number(source[key])
+    return Number.isFinite(n) && n > 0 ? n : 0
+  }
+  const usage: TokenUsage = {
+    uncachedInput: num('uncachedInputTokens'),
+    output: num('outputTokens'),
+    cacheRead: num('cacheReadTokens'),
+    cacheWrite: num('cacheWriteTokens'),
+  }
+  // 全 0 = 这次调用没真正发生（比如首轮就报错），别记成一条「用量 0」
+  return usageTotalOf(usage) === 0 ? null : usage
+}
+
+/** 把 todo 写进某条运行记录（lastRun 与 runs[] 同步改）。 */
+export function patchRunTodos(
+  project: Project,
+  runId: string,
+  todos: readonly TodoItem[],
+): Project {
+  const stamp = (run: RunRecord): RunRecord => (run.id === runId ? { ...run, todos } : run)
+  return {
+    ...project,
+    lastRun: project.lastRun === null ? null : stamp(project.lastRun),
+    runs: project.runs.map(stamp),
+  }
+}
+
+/** 给运行记录补上用量。 */
+function withUsage(run: RunRecord, usage: TokenUsage | null): RunRecord {
+  return { ...run, usage }
 }
 
 /** 读这张图的 candidate.json（截断），给问答会话当上下文。 */
