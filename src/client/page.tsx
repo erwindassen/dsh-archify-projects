@@ -6,7 +6,7 @@
  * 失败不吞。
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import { ROUTES } from '../shared/protocol.js'
 import type {
@@ -23,7 +23,6 @@ import {
   isRunning,
   isStale,
   usageTotalOf,
-  type Concept,
   type DiagramState,
   type Project,
   type TodoItem,
@@ -321,9 +320,6 @@ export function StudioPage({ t }: { t: Translate }): ReactElement {
             <p className="dap-head__sub">{project.repoPath}</p>
           </div>
           <div className="dap-head__actions">
-            <button className="dap-btn dap-btn--sm" onClick={() => setDialog('diagram')}>
-              + {t('action.newDiagram')}
-            </button>
             <button
               className="dap-btn dap-btn--sm dap-btn--primary"
               onClick={() => void runUpdate(project)}
@@ -606,9 +602,7 @@ function Workbench({
   onQa: (qaId: string, action: 'merge' | 'child') => void
   onNewDiagram: () => void
 }): ReactElement {
-  const diagrams = allDiagrams(project)
-  const defaults = diagrams.filter((item) => item.kind !== 'custom')
-  const custom = diagrams.filter((item) => item.kind === 'custom')
+  const custom = project.custom
   const children =
     diagram === undefined ? [] : custom.filter((item) => item.parentId === diagram.id)
   const parent = diagram?.parentId != null ? findDiagram(project, diagram.parentId) : undefined
@@ -638,76 +632,14 @@ function Workbench({
       <RunBar t={t} project={project} />
 
       <div className="dap-wb">
-        <div className="dap-panel">
-          <div className="dap-panel__head">
-            <span>{t('page.title')}</span>
-            <button className="dap-btn dap-btn--ghost dap-btn--sm" onClick={onNewDiagram}>
-              + {t('action.newDiagram')}
-            </button>
-          </div>
-          <div className="dap-panel__body">
-            <div className="dap-rail__group">
-              <div className="dap-rail__label">
-                <span>{t('diagram.defaultSet')}</span>
-              </div>
-              {defaults.map((item) => (
-                <RailItem
-                  key={item.id}
-                  t={t}
-                  diagram={item}
-                  active={item.id === diagram?.id}
-                  onSelect={onSelect}
-                />
-              ))}
-            </div>
-            <div className="dap-rail__group">
-              <div className="dap-rail__label">
-                <span>{t('diagram.customGroup')}</span>
-                <span>{custom.length}</span>
-              </div>
-              {custom
-                .filter((item) => item.parentId === null)
-                .map((item) => (
-                  <RailItem
-                    key={item.id}
-                    t={t}
-                    diagram={item}
-                    active={item.id === diagram?.id}
-                    onSelect={onSelect}
-                  />
-                ))}
-              {custom
-                .filter((item) => item.parentId !== null)
-                .map((item) => (
-                  <RailItem
-                    key={item.id}
-                    t={t}
-                    diagram={item}
-                    active={item.id === diagram?.id}
-                    child
-                    onSelect={onSelect}
-                  />
-                ))}
-            </div>
-            <div className="dap-rail__group">
-              <div className="dap-rail__label">
-                <span>{t('diagram.concepts')}</span>
-                <span>{project.concepts.length}</span>
-              </div>
-              {project.concepts.slice(0, 8).map((concept: Concept) => (
-                <div key={concept.id} className="dap-rail__concept" title={concept.summary}>
-                  {concept.name}
-                  <span>{concept.id}</span>
-                </div>
-              ))}
-              {project.concepts.length === 0 ? (
-                <div className="dap-hint">{t('concept.none')}</div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-
         <div className="dap-panel dap-viewer">
+          <ThumbStrip
+            t={t}
+            project={project}
+            selectedId={diagram?.id ?? null}
+            onSelect={onSelect}
+            onNewDiagram={onNewDiagram}
+          />
           <div className="dap-viewer__head">
             <div className="dap-viewer__title">
               {diagram?.title ?? t('status.none')}
@@ -997,7 +929,85 @@ function Workbench({
   )
 }
 
-function RailItem({
+/** 图片上方的缩略图条：默认两张 + 自定义图（子图挂在父图后面）。 */
+export function ThumbStrip({
+  t,
+  project,
+  selectedId,
+  onSelect,
+  onNewDiagram,
+}: {
+  t: Translate
+  project: Project
+  selectedId: string | null
+  onSelect: (id: string) => void
+  onNewDiagram: () => void
+}): ReactElement {
+  const diagrams = allDiagrams(project)
+  const defaults = diagrams.filter((item) => item.kind !== 'custom')
+  const custom = diagrams.filter((item) => item.kind === 'custom')
+  const roots = custom.filter((item) => item.parentId === null)
+  const childrenOf = (id: string): readonly DiagramState[] =>
+    custom.filter((item) => item.parentId === id)
+
+  return (
+    <div className="dap-strip" role="tablist" aria-label={t('page.title')}>
+      {defaults.map((item) => (
+        <Thumb
+          key={item.id}
+          t={t}
+          diagram={item}
+          active={item.id === selectedId}
+          onSelect={onSelect}
+        />
+      ))}
+      {roots.length > 0 ? <span className="dap-strip__sep" aria-hidden="true" /> : null}
+      {roots.map((item) => (
+        <Fragment key={item.id}>
+          <Thumb t={t} diagram={item} active={item.id === selectedId} onSelect={onSelect} />
+          {childrenOf(item.id).map((child) => (
+            <Thumb
+              key={child.id}
+              t={t}
+              diagram={child}
+              active={child.id === selectedId}
+              child
+              onSelect={onSelect}
+            />
+          ))}
+        </Fragment>
+      ))}
+      <button className="dap-strip__new" onClick={onNewDiagram} title={t('action.newDiagram')}>
+        <span aria-hidden="true">＋</span>
+        {t('action.newDiagram')}
+      </button>
+    </div>
+  )
+}
+
+/**
+ * 缩略图里藏掉成品自带的工具条。
+ *
+ * archify 的 HTML 顶部有「浅色/经典/演示/导出」一排按钮，缩到 0.25 倍后仍然抢眼，
+ * 而且这些按钮在缩略图里点不到（pointer-events:none），干脆隐藏。同源才能改，
+ * 跨域/被拦就静默跳过。
+ */
+export function hideArtifactChrome(frame: HTMLIFrameElement): void {
+  try {
+    const doc = frame.contentDocument
+    if (doc === null) return
+    const style = doc.createElement('style')
+    style.dataset.thumbChrome = 'hidden'
+    style.textContent =
+      '.toolbar, .diagram-nav, .focus-chip, .archify-toast { display: none !important; }'
+    doc.head.appendChild(style)
+  } catch {
+    // 跨域或被沙箱拦住：缩略图里留着工具条也不影响切换
+  }
+}
+
+/** 一张缩略图：ready 的图用缩放后的 iframe 做真预览，其它显示状态。 */
+function Thumb({
   t,
   diagram,
   active,
@@ -1010,26 +1020,51 @@ function RailItem({
   child?: boolean
   onSelect: (id: string) => void
 }): ReactElement {
+  const ready = diagram.status === 'ready' && diagram.htmlPath !== null
   return (
     <button
       className={
         active
           ? child
-            ? 'dap-rail__item dap-rail__item--child dap-rail__item--on'
-            : 'dap-rail__item dap-rail__item--on'
+            ? 'dap-thumbcard dap-thumbcard--child dap-thumbcard--on'
+            : 'dap-thumbcard dap-thumbcard--on'
           : child
-            ? 'dap-rail__item dap-rail__item--child'
-            : 'dap-rail__item'
+            ? 'dap-thumbcard dap-thumbcard--child'
+            : 'dap-thumbcard'
       }
+      role="tab"
+      aria-selected={active}
       onClick={() => onSelect(diagram.id)}
+      title={diagram.title}
     >
-      <Dot
-        tone={diagram.status === 'ready' ? 'ok' : diagram.status === 'failed' ? 'err' : 'warn'}
+      <span
+        className={
+          diagram.status === 'ready'
+            ? 'dap-thumbcard__dot'
+            : diagram.status === 'failed'
+              ? 'dap-thumbcard__dot dap-thumbcard__dot--err'
+              : 'dap-thumbcard__dot dap-thumbcard__dot--warn'
+        }
+        aria-hidden="true"
       />
-      <span className="dap-rail__name">{diagram.title}</span>
-      <span className="dap-rail__meta">
-        {diagram.persistence === 'temporary' ? t('persistence.temporary') : ''}
-      </span>
+      {ready ? (
+        <iframe
+          className="dap-thumbcard__preview"
+          title={diagram.title}
+          src={ROUTES.artifact(diagram.htmlPath as string)}
+          sandbox="allow-scripts allow-same-origin"
+          loading="lazy"
+          tabIndex={-1}
+          aria-hidden="true"
+          onLoad={(event) => hideArtifactChrome(event.currentTarget)}
+        />
+      ) : (
+        <span className="dap-thumbcard__empty">{t(`status.${diagram.status}` as never)}</span>
+      )}
+      <span className="dap-thumbcard__title">{diagram.title}</span>
+      {diagram.persistence === 'temporary' ? (
+        <span className="dap-thumbcard__tag">{t('persistence.temporary')}</span>
+      ) : null}
     </button>
   )
 }

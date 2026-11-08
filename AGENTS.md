@@ -25,7 +25,7 @@
 pnpm verify   # build → artifact:check → typecheck → lint → format:check → deps:check → test
 ```
 
-当前基线：**173 passed / 12 files**。
+当前基线：**174 passed / 12 files**。
 
 ## 产物与数据
 

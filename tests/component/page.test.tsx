@@ -208,6 +208,38 @@ describe('StudioPage', () => {
     void container
   })
 
+  test('缩略图条：默认两张 + 新建图，点缩略图切图', async () => {
+    const project = makeProject({
+      diagrams: {
+        ...makeProject().diagrams,
+        domain: {
+          ...makeProject().diagrams.domain,
+          status: 'ready',
+          htmlPath: 'prj_1/.archify/d/b.html',
+          generatedAt: NOW,
+        },
+      },
+    })
+    stubFetch({ [ROUTES.projects]: { projects: [project], workspacePath: '/ws' } })
+    const { container } = render(<StudioPage t={t} />)
+    fireEvent.click(await screen.findByText('演示仓库'))
+    const tabs = await screen.findAllByRole('tab')
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['项目结构图', '领域图'])
+    // 第一张是结构图
+    expect(container.querySelector('.dap-iframe')?.getAttribute('src')).toContain('a.html')
+    fireEvent.click(tabs[1] as Element)
+    await waitFor(() => {
+      expect(container.querySelector('.dap-iframe')?.getAttribute('src')).toContain('b.html')
+    })
+    // 左栏已移除：文档里不该再有概念索引面板
+    expect(container.querySelector('.dap-rail__group')).toBeNull()
+    // 新建图按钮在缩略图条里（不是 tab，是条尾的虚线按钮）
+    const add = container.querySelector('.dap-strip__new') as Element
+    expect(add.textContent).toContain(DICT.zh['action.newDiagram'])
+    fireEvent.click(add)
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+  })
+
   test('新建图：选图型 tag 会显示说明并带进请求', async () => {
     const project = makeProject()
     const calls = stubFetch({

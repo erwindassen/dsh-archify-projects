@@ -22,7 +22,7 @@ DSH 的左栏插件「架构建模」：把一个代码库登记进台账，用*
 | 方面   | 状态                                                                                                                                                          |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 功能   | 新增/删除项目、Git 探测（分支/commit/上游/脏）、首次生成、更新（切分支+快进+重跑）、重新生成单图、运行记录、深/浅色、非 Git 目录、iframe 内嵌预览、新窗口打开 |
-| 测试   | 173 个用例 / 12 个文件，`vitest` 全绿（约 2 s）                                                                                                               |
+| 测试   | 174 个用例 / 12 个文件，`vitest` 全绿（约 2 s）                                                                                                               |
 | 静态门 | `tsc`（两份 tsconfig）、`eslint`、`prettier --check`、`dependency-cruiser`、`artifact:check`（51.5 KB / 220 KB 预算）全绿                                     |
 | 真机   | 在 `127.0.0.1:3080` 的真实宿主里跑通过「Git 项目」与「非 Git 目录」两条路径，深浅色都验过；截图见 [`docs/verify/`](./verify)                                  |
 | 产物   | `~/.dsh/dsh-archify-projects/` 下 1 个项目（`dsh-word-learn`），两张图 ready                                                                                  |
@@ -195,7 +195,7 @@ pnpm artifact:check # dist/client.js 体积与外部化
 pnpm verify         # 以上全部 + build
 ```
 
-当前基线：**173 passed / 12 files**，`coverage` 目录不进版本库。
+当前基线：**174 passed / 12 files**，`coverage` 目录不进版本库。
 
 测试布局（改哪儿补哪儿）：
 
@@ -383,3 +383,9 @@ cacheWriteTokens`）写 `RunRecord.usage`、`QaEntry.usage`，并累加 `Project
 **容器模型口径**：宿主默认模型切到 `zifei`（自费网关）后，容器的 `self` 路由
 （`192.168.1.4:31783`）`/v1/responses` 返回 404；`dsh-docker` 的 profile patch 与 `.env`
 已同步加 `zifei` + `ZIFEI_API_KEY`。换网关时记得两边一起改。
+
+**v0.6 布局**（`docs/DESIGN.md` §16）：工作台从三栏变两栏，删掉左栏「图册树」与
+「概念索引」；图的选择改成图片上方 91px 的缩略图条（ready 图用缩放后的 iframe 做真预览，
+`hideArtifactChrome` 把成品工具栏藏掉），「新建图」是条尾的虚线按钮。
+查看器宽度从 ≈566px 增到 784px（1440 窗口）。组件测试里断言了「没有 `.dap-rail__group`」，
+别把左栏加回来。
