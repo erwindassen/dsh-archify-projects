@@ -52,6 +52,34 @@ npm view dsh-archify-projects dist.tarball --registry=https://registry.npmjs.org
    `.github/workflows/release.yml` 会先建 GitHub Release（始终），再因为 `NPM_TOKEN`
    存在而跑 `npm publish`。没配 secret 时这一步跳过，其它照常。
 
+## 3.5 发布被 2FA 挡住（E403）
+
+npm 现在不接受「网页登录换来的 session token」直接发版，两条路：
+
+**A. 用验证器的一次性码**
+
+```bash
+NPM_OTP=123456 ./scripts/npm-onboard.sh
+# 或直接
+npm publish --access public --registry=https://registry.npmjs.org --otp=123456
+```
+
+**B. 建 Bypass 2FA 的 granular token（CI 也用它，推荐）**
+
+1. <https://www.npmjs.com/settings/xirizhi/tokens> → **Generate New Token** → **Granular Access Token**
+2. Permissions：**Read and write**
+3. Packages and scopes：**All packages**（首次发布时包还不存在，只能选全部）
+4. **勾上 `Bypass two-factor authentication`**（这个开关默认关闭，不勾等于白建）
+5. 生成后：
+
+```bash
+printf '//registry.npmjs.org/:_authToken=%s\n' 'npm_你的token' >> ~/.npmrc
+npm publish --access public --registry=https://registry.npmjs.org
+```
+
+> 注意：`Bypass 2FA` 会覆盖账号级/包级 2FA 设置，等同把发布权限交给这个 token。
+> 给它设一个合理有效期，别设永不过期。
+
 ## 4. 版本号与 tag 的关系
 
 - `package.json` 的 `version` 是唯一真相；
