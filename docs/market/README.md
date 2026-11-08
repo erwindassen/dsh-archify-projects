@@ -57,6 +57,23 @@ git push origin add-dsh-archify-projects
 
 **不要手改 README**：两份 README 由 `data/plugins/*.yml` 生成，合并后 CI 自动重生成。
 
+## npm 版本号与下载量：不要加字段
+
+市场卡片上的「npm 版本 / 下载量」**不是条目字段**。`awesome-dsh-plugin` 的校验会拒绝
+手写的 `npm:` 键（见其 contributing.md「npm package」一节），映射由 nightly 的
+`scripts/probe-npm.mjs` 自动采集：
+
+1. 从仓库 `package.json` 读包名；
+2. 去 registry 查这个包；
+3. **要求该包的 `repository` 字段指回同一个 GitHub 仓库**（防抢注）。
+
+所以只要满足这三条，下一次 nightly（`build-site.yml`，每天 `02:23 UTC` ≈ 北京 10:23）
+就会自动补上版本号，随后 `probe-downloads` 补下载量：
+
+- 条目已在 README（PR 合并）✅
+- 仓库 `package.json` 的 `name` = `dsh-archify-projects` ✅
+- npm 包的 `repository` = `git+https://github.com/guicaiyue/dsh-archify-projects.git` ✅
+
 ## 会不会自动出现
 
 - 合并后，`awesome-dsh-plugin.com/plugins.json` 与 npm 上的 `dsh-plugin-catalog` 索引
