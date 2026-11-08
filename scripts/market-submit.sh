@@ -18,7 +18,20 @@ BRANCH="add-dsh-archify-projects"
 WORKDIR="$(mktemp -d)"
 
 command -v gh >/dev/null || { echo "需要 GitHub CLI（gh）" >&2; exit 1; }
-gh auth status >/dev/null 2>&1 || { echo "先授权：gh auth login  或  gh auth login --with-token" >&2; exit 1; }
+
+# 两种授权方式都支持：
+#   1) gh 里存好的凭据（gh auth login / --with-token，经典 token 需要 repo + read:org）
+#   2) 直接给环境变量，绕开 gh 的 scope 校验（token 只需要 repo）
+if [ -n "${GH_TOKEN:-}" ] || [ -n "${GITHUB_TOKEN:-}" ]; then
+  echo "使用环境变量里的 token（GH_TOKEN / GITHUB_TOKEN）"
+elif gh auth status >/dev/null 2>&1; then
+  echo "使用 gh 已保存的凭据"
+else
+  echo "先授权，二选一：" >&2
+  echo "  echo 'ghp_xxx' | gh auth login --with-token      # token 需勾 repo + read:org" >&2
+  echo "  export GH_TOKEN=ghp_xxx                         # 只需要 repo，绕过 scope 校验" >&2
+  exit 1
+fi
 [ -f "$ENTRY_SRC" ] || { echo "找不到条目文件：$ENTRY_SRC" >&2; exit 1; }
 
 echo "== 1/3 加 topic dsh-plugin =="
