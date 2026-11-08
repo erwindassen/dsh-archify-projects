@@ -695,3 +695,73 @@ $DSH_HOME/dsh-archify-projects/
 5. **问答**：`POST /diagrams/:id/ask`，复用受限 agent，回答落 `qa.jsonl`，
    两个动作各对应一个路由（merge / create-child）。
 6. **前端**：三栏工作区 + 新建图对话框 + 问答页签（原型已定稿）。
+
+---
+
+## 14. v0.4：布局收敛、进度（todo）与用量（2026-11-08）
+
+原型：`docs/design/workbench-v04.html`（OpenDesign 项目 `archify-workbench-v04`），
+截图 `docs/design/v04-*.png`。
+
+### 14.1 右栏必须有高度限制（bug 修复）
+
+实测问题：一条长回答会把右栏撑得比页面还高，左/中两栏被拉成空白，整页跟着滚动
+（2026-11-08 的真机截图）。根因是三栏网格 `align-items: start` + 右栏内容自然撑高。
+
+约定改成**工作台整屏、三栏各自滚动**：
+
+- `#screen-wb` 是 `height:100%; display:flex; flex-direction:column`，页面主体不再整体滚动；
+- 三栏 `align-items: stretch`，每个 panel `min-height:0; display:flex; flex-direction:column`；
+- 面板内部（图册树 / 查看器 stage / 检查器 insp-body）各自 `overflow:auto`；
+- 提问输入框 `position:sticky; bottom:0`，并给滚动体留底部 padding，避免最后一行被输入框盖住；
+- 结果：提问线程再长，页面高度不变，左图和中图不动，只有右栏内部滚动。
+
+### 14.2 所有 agent 会话都要有 todo（进度可见）
+
+- 两个 preset（出图 `archify-projects`、问答 `archify-projects-ask`）都挂
+  `@deepseek-ai/dsh-tool-todo`，配置 `allowParallelInProgress: false`（该字段必填）。
+- 提示词第一条硬约束：**开始前先建 4–7 步的 todo**，每完成一步就更新；最后一步固定是
+  「回报产物标记」。
+- runner 在运行期间读会话的 `todos` projection（宿主已有），把快照写进
+  `RunRecord.todos: {content,status}[]`；会话里没有 todo 时留空，页面不显示进度条。
+- 页面：
+  - 顶部 `runbar`：`生成中 · 正在：<当前 in_progress 步骤>（5/7）` + 进度条 + 百分比 + 本次 tokens + 会话链接；
+  - 检查器「进度」：完整 todo 列表（✓ / spinner / ○）；
+  - 总览卡片运行中显示当前步骤（`正在：…`），代替只转圈的焦虑感。
+
+### 14.3 项目 token 消耗
+
+- 宿主自带 `dsh-token-meter`，`tokenUsage` projection 给出
+  `uncachedInputTokens / outputTokens / cacheReadTokens / cacheWriteTokens`。
+- runner 每次运行结束时把这份快照写进 `RunRecord.usage`；项目累计 = `runs[].usage` 求和
+  （保留最近 `keepRuns` 条，累计值单独冗余在 `Project.usageTotal`，避免裁剪后失真）。
+- 显示位置：
+  - 工作台 gitbar 一枚 chip：`18.4k tokens · ≈ ¥0.09`（本次）；
+  - 检查器「用量」：本次 / 累计 tokens + 输入/缓存/输出明细 + **估算**费用；
+  - 总览卡片页脚：`main · 2 小时前 · 3 组图 · 18.4k tokens`。
+- 费用是估算：单价来自配置 `pricing`（默认按 `deepseek-v4.1-flash` 的输入/输出价），
+  文案必须带「≈ / 估」，不假装是账单。
+
+### 14.4 数据模型增量
+
+```ts
+RunRecord {
+  ...existing,
+  todos: { content: string; status: 'pending' | 'in_progress' | 'completed' }[]
+  usage: { uncachedInput: number; output: number; cacheRead: number; cacheWrite: number } | null
+}
+Project {
+  ...existing,
+  usageTotal: number   // 历史累计 tokens（不随 runs 裁剪丢失）
+}
+```
+
+`GET /projects` 已经返回整条项目，页面不需要新接口。
+
+### 14.5 实现顺序
+
+1. `cordis.patch.yml`：两个 preset 加 `tool-todo`（ask 也加，问答同样能建计划）；
+2. prompt：首条硬约束 + 出图分步模板（概念 → structure → finalize → domain → finalize → messages）；
+3. runner：运行中读 `todos` projection（节流写台账），结束时读 `tokenUsage` 写 `usage` / `usageTotal`；
+4. 页面：整屏三栏 + 右栏独立滚动 + runbar + 进度 / 用量区块；
+5. 测试：todo 投影解析、用量累加、长 QA 不影响布局（组件测试可用长文本断言容器高度）。
