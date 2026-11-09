@@ -27,6 +27,31 @@
 
 ---
 
+## 效果
+
+> 截图来自真实运行——被测仓库就是这个插件自己，数据都是跑出来的，不是设计稿。
+
+**总览**：每个仓库一张卡片，直接看出分支、工作区改动、概念数、哪些图已经就绪、有没有人在跑。
+
+![总览：仓库卡片、概念数、图状态](https://raw.githubusercontent.com/guicaiyue/dsh-archify-projects/main/docs/verify/shot-atlas.png)
+
+**工作台**：图名 tab 在图片上方（只有文字，不占高度），左边是图，右边是检查器——
+prompt、概念范围、分支、进度、token 用量、运行记录都在这一栏。
+
+![工作台：图名 tab、成品图、右侧检查器](https://raw.githubusercontent.com/guicaiyue/dsh-archify-projects/main/docs/verify/shot-workbench.png)
+
+**提问**：对着某张图问细节，agent 在**只读会话**里读代码回答，回答可以直接「补进图里」
+或变成一张子图。
+
+![提问：只读会话基于图和代码回答](https://raw.githubusercontent.com/guicaiyue/dsh-archify-projects/main/docs/verify/shot-qa.png)
+
+**新建图**：图型 tag 直接对应 archify 的 5 种渲染器，点一下告诉你「适合看什么 / 会展示
+代码库的哪些信息 / 能让你掌握什么」；不选也行，由 agent 判断。
+
+![新建图：图型 tag 与说明](https://raw.githubusercontent.com/guicaiyue/dsh-archify-projects/main/docs/verify/shot-dialog.png)
+
+---
+
 ## 安装
 
 装的是**已发布的包**，一条命令，装在哪个 profile 就写哪个名字（默认 `web`）：
