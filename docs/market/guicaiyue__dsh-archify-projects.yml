@@ -2,8 +2,8 @@ url: https://github.com/guicaiyue/dsh-archify-projects
 name: guicaiyue/dsh-archify-projects
 category: docs
 description:
-  en: 'Architecture map workbench: register local repos, let a restricted agent read the code with the archify skill, and keep branch-level structure and domain diagrams with concepts, temporary/permanent custom diagrams, and read-only Q&A.'
-  zh: '代码库架构图册：登记本地仓库，由受限 agent 用 archify skill 读代码，按分支维护结构图与领域图，支持概念提取、临时/永久自定义图与只读追问。'
+  en: 'Architecture map workbench: register local repos, let a restricted agent (run as a hidden subagent session) read the code with the archify skill, keep branch-level structure and domain diagrams with concepts, temporary/permanent custom diagrams, read-only Q&A, and pick the analysis model from the models DSH already has configured.'
+  zh: '代码库架构图册：登记本地仓库，由受限 agent（跑在子代理会话里，不占会话列表）用 archify skill 读代码，按分支维护结构图与领域图，支持概念提取、临时/永久自定义图、只读追问，并可在设置里挑选 DSH 已配好的模型来跑分析。'
 # 注意：这里**不要**手写 npm: 字段 —— awesome-dsh-plugin 的校验会直接拒绝，
 # npm 映射由 nightly 的 scripts/probe-npm.mjs 自动采集（读仓库 package.json 的
 # name，再要求 registry 里该包的 repository 指回同一个 GitHub 仓库）。
