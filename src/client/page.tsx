@@ -689,6 +689,7 @@ function Workbench({
                   title={diagram.title}
                   src={ROUTES.artifact(diagram.htmlPath)}
                   sandbox="allow-scripts allow-same-origin"
+                  onLoad={(event) => hideArtifactHeader(event.currentTarget)}
                 />
               </div>
             ) : (
@@ -982,6 +983,28 @@ export function ThumbStrip({
       </button>
     </div>
   )
+}
+
+/**
+ * 内嵌查看器里去掉成品自带的页头（大标题 + 状态圆点）。
+ *
+ * 成品 HTML 顶部有一行「<项目名> · 图名」的大标题和一个 pulse-dot，而插件自己的
+ * 查看器标题栏已经写了图名、帧头也写了分支与时间——重复一遍只是白吃画布高度。
+ * 只在 iframe 里注入，点「新窗口」单独打开时仍是成品原样（那里没有外层标题）。
+ * 同源才改得动；被沙箱或跨域挡住就静默跳过，不影响看图。
+ */
+export function hideArtifactHeader(frame: HTMLIFrameElement): void {
+  try {
+    const doc = frame.contentDocument
+    if (doc === null) return
+    if (doc.head.querySelector('style[data-embedded="compact"]') !== null) return
+    const style = doc.createElement('style')
+    style.dataset.embedded = 'compact'
+    style.textContent = '.header{display:none!important}'
+    doc.head.appendChild(style)
+  } catch {
+    // 跨域或沙箱拦截：保留成品原样
+  }
 }
 
 /**

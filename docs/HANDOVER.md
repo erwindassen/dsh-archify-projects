@@ -389,3 +389,9 @@ cacheWriteTokens`）写 `RunRecord.usage`、`QaEntry.usage`，并累加 `Project
 不再有额外 iframe），「新建图」是条尾的虚线按钮。
 查看器宽度从 ≈566px 增到 784px（1440 窗口）。组件测试里断言了「没有 `.dap-rail__group`」，
 别把左栏加回来。
+
+**内嵌查看器隐藏成品页头**：archify 成品 HTML 顶部有一行
+`<项目名> · <图名>` 大字 + `pulse-dot`，而插件自己的查看器标题栏和帧头已经写了图名、
+分支与时间。`page.tsx` 的 `hideArtifactHeader()` 在 iframe `onLoad` 时往同源文档 head
+注入一条 `.header{display:none!important}`，只影响嵌入视图；点「新窗口」仍是成品原样。
+同源被沙箱挡住就静默跳过，不影响看图。
