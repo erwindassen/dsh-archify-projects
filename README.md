@@ -98,6 +98,8 @@ pnpm add link:/absolute/path/to/dsh-archify-projects   # 或在 package.json 里
 3. 首次添加会自动跑一次 `create`：结构图 + 领域图各一张，通常几分钟。
 4. 之后随时「更新」：切回记录的分支 → 快进到最新 → 重画两张图。
 5. 图是可以直接看的 HTML（archify 产物：可搜索、可缩放、可导出），不是截图。
+6. 右上角**齿轮**是设置：只有一个「分析模型」下拉，选项就是你在 DSH 里已经配好、
+   当前真能路由的模型；不选＝跟随宿主默认。改完对下一次运行生效。
 
 ---
 
@@ -125,6 +127,16 @@ pnpm add link:/absolute/path/to/dsh-archify-projects   # 或在 package.json 里
 
 `restrict` 只能装在 scoped ctx（`agent.ctx`）上，写在 preset 行里会直接抛 ——
 所以白名单与守卫在 `src/host/policy.ts` 里，运行开始时对当次会话安装。
+
+### 分析跑在子代理会话里，不占你的会话列表
+
+每次出图 / 提问都用一个 **`origin: 'subagent'` 的会话**（`ctx.agents.create` +
+`agentPresets.mount`），所以：
+
+- DSH 左侧会话列表按 origin 过滤子代理会话 —— 分析不会往你的对话列表里塞新条目；
+- 会话的模型走 `agentOptions`，**只影响这一次运行**，不会改掉 DSH 里你的默认模型；
+- 宿主版本没有这条路（缺 `agents.create` / `agentPresets`）时安静退回普通会话，
+  工具白名单、preset、产物回收都不变。
 
 ### 深浅色
 
@@ -217,6 +229,7 @@ scripts/           artifact 门禁
 | 位置                                                         | 内容                                                                                    |
 | ------------------------------------------------------------ | --------------------------------------------------------------------------------------- |
 | `~/.dsh/archify-projects/projects.json`（可用 `dataDir` 改） | 台账：项目、Git 快照、两张图的状态、运行历史（保留最近 20 条）                          |
+| 同目录 `settings.json`                                       | 插件设置：分析用哪个模型（`{ provider, model }`，null = 跟随宿主默认）                  |
 | `~/.dsh/archify-projects/workspace/<projectId>/`             | 每个项目的工作目录；`.archify/<kind>-<slug>-<stamp>/` 里是 `candidate.json` 与成品 HTML |
 | `<插件目录>/skills/archify/`                                 | 内嵌的 archify skill（不进 git：见 `.gitignore`；npm 包用 `files` 带上）                |
 

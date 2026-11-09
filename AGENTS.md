@@ -25,7 +25,9 @@
 pnpm verify   # build → artifact:check → typecheck → lint → format:check → deps:check → test
 ```
 
-当前基线：**174 passed / 12 files**。
+当前基线：**206 passed / 15 files**。跑之前确认 `NODE_ENV` 不是 `production`
+（React 19 的 `act` 只在 development 构建里导出，组件测试会 9 连红）：
+`NODE_ENV=test pnpm verify`。
 
 ## 产物与数据
 

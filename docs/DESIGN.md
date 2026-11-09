@@ -903,3 +903,84 @@ DiagramState {
 
 OpenDesign 原型同步更新到 v0.7：`docs/design/workbench-v07.html`
 （项目 `archify-workbench-v07`），截图 `docs/design/v07-prototype.png`，条高与实现一致（35px）。
+
+---
+
+## 18. v0.2.0：子代理会话 + 设置（模型）
+
+### 18.1 一个决定：会话归谁所有
+
+| 方案                                                                 | 会话形态                         | 能不能按次指定模型               | 结论                                                              |
+| -------------------------------------------------------------------- | -------------------------------- | -------------------------------- | ----------------------------------------------------------------- |
+| `sessionController.create()`（v0.1）                                 | 普通会话，进左侧会话列表         | 只能 `selectModel`（改全局默认） | 淘汰                                                              |
+| `ctx.agents.create()` + `agentPresets.mount()`（v0.2，本插件自己建） | `origin: 'subagent'`，被侧栏过滤 | `agentOptions` 只作用于这条会话  | **采用**                                                          |
+| `ctx.subagents.startActivation()`                                    | 真子代理                         | 支持                             | 不可用：`request.parent` 必须是**活着的父 agent**，插件没有父会话 |
+
+第三条是原本最「正确」的答案，但 DSH 的子代理接口要求一个活着的父 Agent
+（父会话用于目录归属与结果投递），而插件的分析是路由触发的，没有父会话。
+插件自己建一个 `origin: 'subagent'` 的会话能达到同样的可见性效果（侧栏按
+origin 过滤），并且绕开「父会话必须存在」这个前提。
+
+代价与边界：
+
+- 这条会话没有 `parentSession`，所以它不会出现在任何父会话的子代理目录里 ——
+  用户看不见它的对话。插件用 todos / usage / qa 三个投影把它「翻译」到自己的
+  页面上，这是刻意的取舍；
+- 通用会话接口（`sessionController.prompt` / `observe`）会拒绝驱动它
+  （`session/agent-busy`），所以提示词只能走 `agent.followup()`；
+- 宿主缺 `agents.create` / `agentPresets` 时退回 v0.1 的路，功能不消失。
+
+### 18.2 设置为什么只有一个字段
+
+用户的原话是「弹窗仅展示模型」。所以设置里**只有**一项：分析模型。没有开关、
+没有超时、没有并发 —— 其它可调项都留在 `cordis.patch.yml` / 插件配置里，
+那是部署者的领域，不是页面上随手能改的东西。
+
+模型列表不复用「宿主设置页」的 UI，只复用它的**数据源**：
+`sessionController.modelCatalog()`。理由：插件页面是独立 bundle，拿不到 DSH
+设置页的组件；而 catalog 是宿主公开的 Host API，返回的就是「当前真能路由」的
+模型集合，正好是用户要的「复用 DSH 配好的模型」。
+
+三层校验：
+
+1. 页面：下拉里只有目录里的项 + 「跟随宿主默认」；
+2. 路由：形状不对 → 400；目录非空且路由不在目录里 → 400；
+3. 运行期：`agentOptions` 交给宿主，路由不可用时宿主自己报错，插件把失败记进
+   `runs[]` 的 error，不吞。
+
+### 18.3 一个 UI 取舍：原生 `<select>` 而不是自制下拉
+
+模型可能有几十个（多 provider × 多模型），自绘下拉要处理键盘、滚动、遮挡、
+可访问性；原生 `<select>` 全都有，而且跟随宿主主题。代价是样式受限（只有
+`.dap-select` 一层壳），但设置面板本来就是低频入口，不值得为它写一个组件。
+
+---
+
+## 19. v0.8 原型：设置入口（OpenDesign 同步）
+
+![v0.8 设置弹窗](./design/v08-settings.png)
+
+实现落地（`src/host/settings.ts` / `routes.ts` / `runner.ts`）之后，原型同步到 **v0.8**：
+
+| 项             | 内容                                                                                                     |
+| -------------- | -------------------------------------------------------------------------------------------------------- |
+| 原型文件       | [`docs/design/workbench-v08.html`](./design/workbench-v08.html)（v0.7 + 齿轮 + 设置弹窗）                |
+| OpenDesign     | 项目 **`archify-workbench-v08`**（`index.html` 与上面那份逐字节一致）                                    |
+| 截图（浅色）   | [`design/v08-settings.png`](./design/v08-settings.png)、[`design/v08-atlas.png`](./design/v08-atlas.png) |
+| 截图（深色）   | [`design/v08-settings-dark.png`](./design/v08-settings-dark.png)                                         |
+| 入口位置       | 总览头部「全部更新」左侧、工作台头部「更新图册」左侧，33px（工作台 30px）方形图标按钮                    |
+| 弹窗里有什么   | **只有一**：分析模型下拉（原生 `<select>`）+ 「会话形态 = 子代理会话」一行说明                           |
+| 底部原型切换条 | 「总览 / 工作区 / 新建图 / **设置** / 深色」                                                             |
+
+### 19.1 为什么原型里要画「会话形态」
+
+用户能看见的唯一区别就是**左侧会话列表里不再多出一条**。原型里把它写死在弹窗底部
+（`子代理会话 · 不占用左侧会话列表`），是提醒后来改 UI 的人：这一行不是装饰，
+它对应 `runner.ts` 里 `meta.origin = 'subagent'` 这个事实。
+
+### 19.2 生成方式
+
+原型是「v0.7 + 三处增量」手改出来的（不是让模型重新设计）：CSS 加 `.iconbtn` /
+`.select`、两个头部各插一个齿轮、弹窗与 JS 照抄新建图弹窗的开关模式。
+截图用 `google-chrome-stable --headless=new --window-size=1440,900 --screenshot` 出，
+深色那张是把 `<html data-theme="dark">` 打开后再截一次 —— 和 v0.4–v0.7 的做法一致。

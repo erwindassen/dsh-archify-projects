@@ -3,7 +3,7 @@
 > 面向接手的 agent。读完这一份就能改代码、跑验证、装/卸插件、看懂当初为什么这么写。
 > 面向使用者的上手说明在 [README](../README.md)，设计取舍在 [DESIGN.md](./DESIGN.md)。
 
-最后更新：2026-11-07（v0.1.0，功能完备、已在真机跑通）
+最后更新：2026-11-09（v0.2.0：子代理会话 + 设置/模型选择，见 §13）
 
 ---
 
@@ -22,7 +22,7 @@ DSH 的左栏插件「架构建模」：把一个代码库登记进台账，用*
 | 方面   | 状态                                                                                                                                                          |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 功能   | 新增/删除项目、Git 探测（分支/commit/上游/脏）、首次生成、更新（切分支+快进+重跑）、重新生成单图、运行记录、深/浅色、非 Git 目录、iframe 内嵌预览、新窗口打开 |
-| 测试   | 174 个用例 / 12 个文件，`vitest` 全绿（约 2 s）                                                                                                               |
+| 测试   | 206 个用例 / 15 个文件，`vitest` 全绿（约 1 s；`NODE_ENV` 不能是 production，见 §13.5）                                                                       |
 | 静态门 | `tsc`（两份 tsconfig）、`eslint`、`prettier --check`、`dependency-cruiser`、`artifact:check`（51.5 KB / 220 KB 预算）全绿                                     |
 | 真机   | 在 `127.0.0.1:3080` 的真实宿主里跑通过「Git 项目」与「非 Git 目录」两条路径，深浅色都验过；截图见 [`docs/verify/`](./verify)                                  |
 | 产物   | `~/.dsh/dsh-archify-projects/` 下 1 个项目（`dsh-word-learn`），两张图 ready                                                                                  |
@@ -78,8 +78,9 @@ pnpm verify        # build → artifact:check → typecheck/lint/format/deps →
   └─ POST /dsh-archify-projects/projects/:id/update          src/host/routes.ts
        ├─ git.ts        切回记录的分支 → fetch → FF 到最新 → 重新探测快照
        ├─ store.ts      台账里记一条 run(running)，两张图置 queued
-       └─ runner.ts     起受限会话
-            ├─ sessions.create({ presetId: 'archify-projects' })
+       └─ runner.ts     起受限会话（v0.2：子代理会话，见 §13）
+            ├─ agents.create({ meta.origin:'subagent', agentOptions:{provider,model},
+            │                  setup: agentPresets.mount(preset) })  ← 旧路：sessionController.create
             ├─ policy.ts   agent.ctx 上装 tools.restrict(allow) + tools.guard(fn)
             ├─ prompt.ts   拼 prompt（代码库路径、分支/commit、上次产物、产物标记约定）
             ├─ 投 prompt → whenIdle（或 runTimeoutMs 超时）
@@ -395,3 +396,109 @@ cacheWriteTokens`）写 `RunRecord.usage`、`QaEntry.usage`，并累加 `Project
 分支与时间。`page.tsx` 的 `hideArtifactHeader()` 在 iframe `onLoad` 时往同源文档 head
 注入一条 `.header{display:none!important}`，只影响嵌入视图；点「新窗口」仍是成品原样。
 同源被沙箱挡住就静默跳过，不影响看图。
+
+---
+
+## 13. v0.2.0：分析跑在子代理会话里 + 设置（模型选择）
+
+> 本节描述 2026-11-09 之后的形态。两个改动是同一条线索的两半：**要能给每次运行
+> 单独指定模型，就不能再用「新建一个普通会话」那条路**。
+
+### 13.1 为什么「用子代理执行」
+
+原来 `runner.openSession` 走 `sessionController.create()` —— 那是「开一个新对话」的
+接口，后果有两个：分析会话会出现在用户的左侧会话列表里；而要给会话换模型只能用
+`sessionController.selectModel()`，它的契约是**顺手把选择存成宿主的全局默认**（会把
+用户自己的默认模型改掉）。
+
+改成自己建 agent（`ctx.agents.create`）：
+
+```ts
+const handle = await agents.create({
+  sessionId: `session-${randomUUID()}`,
+  meta: {
+    cwd: workspaceDir, // 插件工作区，提示词约定产物落这里
+    agentPreset: preset.id, // 与 cordis.patch.yml 里的受限 preset 同一个
+    origin: 'subagent', // DSH 侧边栏 sessionVisible() 直接过滤掉
+    delegationDepth: 1, // 本插件不再往下派子代理
+  },
+  agentOptions: { provider, model }, // ← 设置里选的模型，只影响这条会话
+  setup: async (agentCtx) => {
+    await presets.mount(agentCtx, preset.id)
+  },
+})
+agent.followup({ id, role: 'user', content, source: { kind: 'user' } })
+```
+
+要点（改这段前务必知道）：
+
+1. **`mount()` 必须在 `setup` 里调**：preset 的工具面 / persona / skill 目录都是
+   在 agent 的 scoped ctx 里注册的，`setup` 是唯一能装上去的时机。
+2. **`origin: 'subagent'` 的会话不能被通用会话接口驱动**：`sessionController.prompt`
+   会以 `session/agent-busy`（"subagent Sessions require their durable parent address"）
+   拒绝。所以提示词用 `agent.followup()`，不要混着用。
+3. **不要给这种会话调 `selectModel`**：既被 (2) 拒，也会改全局默认。
+4. 召回/收尾完全没变：`agents.get(sessionId)` 仍然拿得到 agent，`whenIdle`、`todos`、
+   `tokenUsage` 三个 projection 都照旧。
+5. 兜底顺序：`agents.create` 建失败 → 记一条 warn → 退回 `sessionController.create` +（如果 agent 暴露了 `agent.model.select`）直接改这条会话的路由。功能不会因为
+   宿主版本变化而消失，只是会话回到「普通会话 + 宿主默认模型」。
+
+### 13.2 设置：只有一个字段
+
+| 位置                                            | 内容                                                      |
+| ----------------------------------------------- | --------------------------------------------------------- |
+| `src/host/settings.ts`                          | `settings.json` 读写（原子 rename）、形状校验、坏文件回落 |
+| `src/host/models.ts`                            | `controller.modelCatalog()` 的防御式收纳（分组 → 扁平）   |
+| `GET/PUT /dsh-archify-projects/settings`        | 页面拿/存设置；PUT 在目录非空时校验路由真的存在           |
+| `src/client/components.tsx` 的 `SettingsDialog` | 齿轮弹窗：**只有一个模型下拉**，没有第二个可输入控件      |
+
+`ModelRef = { provider, model, reasoningEffort? }`，字段名与 DSH 的 `ModelSelection`
+一致，宿主侧可以原样塞进 `agentOptions`，不做翻译。
+
+**模型不在插件里定义**：选项全部来自 `sessionController.modelCatalog()`
+（`{ default, groups: [{ id, name, models: [{ id, name }] }], failures }`），
+也就是用户在 DSH 里配好、当前真能路由到的那些。目录拿不到时页面只说
+「跟随宿主默认」，不显示空下拉假装能选。
+
+### 13.3 真机验证（2026-11-09，dsh-dev 容器 127.0.0.1:3080）
+
+| 步骤                      | 结果                                                                                                          |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `GET /settings`（升级前） | `not-found 未知路由：GET /settings`（确认是新代码才有）                                                       |
+| `GET /settings`（重启后） | 200，目录里是容器真配的两个路由：`self::…flash`、`zifei::…flash`，`fallback=zifei/deepseek-v4.1-flash`        |
+| `PUT /settings`           | 200，`<dataDir>/settings.json` 落盘 `{ model: { provider, model } }`                                          |
+| 提问一次（只读会话）      | 45 s 返回带文件行的回答；会话头 `"origin":"subagent","delegationDepth":1`，`config.provider=zifei`            |
+| 重画一张图（出图会话）    | `ready` + 产物路径 + usage（160k in / 90k out）；会话头同样 `origin:subagent`，`agentPreset=archify-projects` |
+| 会话日志里的工具名        | `read / write / edit / glob / grep / skill / bash / todo_write` —— 白名单原样生效，没有 `web_search`/`task`   |
+
+结论：`mount()` 在真机的两个 preset 上都装对了（工具面、persona、archify skill 全在），
+`agentOptions` 也真的生效；`/settings` 的探测在请求期（而不是插件 apply 期）才准，
+所以 `RouteState.subagentSessions` 是**惰性函数**，别改回布尔快照 —— apply 时宿主
+还没装好 `sessionController`，快照会永远显示「宿主不支持」。
+
+### 13.4 原型同步（OpenDesign）
+
+实现改完必须把**原型**也改掉，否则会出现「页面上有齿轮、原型里没有」的错位：
+
+- `docs/design/workbench-v08.html` = v0.7 + 齿轮按钮 + 设置弹窗（CSS `.iconbtn`/`.select`，
+  两个头部各插一个，弹窗开关照抄「新建图」的模式）；
+- OpenDesign 项目 **`archify-workbench-v08`**（`index.html` 与上面那份相同）；
+- 截图：`docs/design/v08-settings.png`（浅色）、`v08-settings-dark.png`（深色）、
+  `v08-atlas.png`（齿轮在头部的位置）；
+- 出图方式：`google-chrome-stable --headless=new --window-size=1440,900 --screenshot`，
+  深色把 `<html data-theme="dark">` 打开后再截一次。
+
+### 13.5 测试与两个坑
+
+新增：`tests/unit/settings.test.ts`（9）、`tests/unit/models.test.ts`（6）、
+`tests/unit/routes.test.ts` 的「设置（分析模型）」（7）、
+`tests/integration/subagent.test.ts`（6，含「建会话失败要退回普通会话」）、
+`tests/component/page.test.tsx` 的「设置入口」（3）。基线：**206 passed / 15 files**。
+
+- **坑 1：`NODE_ENV=production` 会让组件测试全红**（`React.act is not a function`，
+  9 个用例全挂在 `render()` 上）。React 19 的 `act` 只在 development 构建里导出，
+  vitest 又是按 `NODE_ENV` 选包的。跑 verify 前确认 `NODE_ENV` 不是 `production`
+  （`NODE_ENV=test pnpm verify`）。这不是本插件的 bug，但看起来一模一样。
+- **坑 2：组件测试的 fetch 桩是按「METHOD url」精确匹配的**，未命中就回
+  `not-found`。`StudioPage` 现在挂载时会 `GET /settings`，所以设置拉取**必须静默
+  失败**（`try/catch` 里什么都不做），否则每条老用例都会多出一条错误提示。
