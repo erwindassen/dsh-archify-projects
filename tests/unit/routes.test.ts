@@ -38,6 +38,7 @@ beforeEach(async () => {
     skillDir: async () => 'C:/skills/archify',
     version: '0.1.0',
     hasSessionService: true,
+    subagentSessions: () => false,
   }
 })
 
@@ -421,5 +422,113 @@ describe('newProjectId', () => {
     const ids = new Set(Array.from({ length: 200 }, () => newProjectId()))
     expect(ids.size).toBe(200)
     expect([...ids][0]?.startsWith('prj_')).toBe(true)
+  })
+})
+
+describe('设置（分析模型）', () => {
+  /** 造一份宿主模型目录；`null` 表示宿主没这个能力。 */
+  function withCatalog(catalog: unknown): void {
+    state = {
+      ...state,
+      subagentSessions: () => true,
+      ctx: {
+        logger: { info: () => {}, warn: () => {} },
+        ...(catalog === null ? {} : { sessionController: { modelCatalog: async () => catalog } }),
+      } as never,
+    }
+  }
+
+  const CATALOG = {
+    default: { provider: 'dsh', model: 'deepseek-v4' },
+    groups: [{ id: 'dsh', name: 'DeepSeek', models: [{ id: 'deepseek-v4', name: 'DeepSeek V4' }] }],
+    failures: [],
+  }
+
+  test('GET /settings 默认跟随宿主默认，并带上宿主模型目录', async () => {
+    withCatalog(CATALOG)
+    const res = await call('/dsh-archify-projects/settings')
+    expect(res.status).toBe(200)
+    const payload = res.json() as {
+      value: {
+        model: unknown
+        subagentSessions: boolean
+        catalog: { source: string; fallback: unknown; options: { key: string }[] }
+      }
+    }
+    expect(payload.value.model).toBeNull()
+    expect(payload.value.subagentSessions).toBe(true)
+    expect(payload.value.catalog.source).toBe('host')
+    expect(payload.value.catalog.fallback).toEqual({ provider: 'dsh', model: 'deepseek-v4' })
+    expect(payload.value.catalog.options.map((option) => option.key)).toEqual(['dsh::deepseek-v4'])
+  })
+
+  test('宿主没有模型目录时 source=unavailable（页面据此只说「跟随宿主默认」）', async () => {
+    withCatalog(null)
+    const res = await call('/dsh-archify-projects/settings')
+    const payload = res.json() as { value: { catalog: { source: string; options: unknown[] } } }
+    expect(payload.value.catalog.source).toBe('unavailable')
+    expect(payload.value.catalog.options).toEqual([])
+  })
+
+  test('PUT /settings 存下模型并回执落盘后的值', async () => {
+    withCatalog(CATALOG)
+    const res = await call('/dsh-archify-projects/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ model: { provider: 'dsh', model: 'deepseek-v4' } }),
+    })
+    expect(res.status).toBe(200)
+    const payload = res.json() as { value: { model: unknown } }
+    expect(payload.value.model).toEqual({ provider: 'dsh', model: 'deepseek-v4' })
+    // 再 GET 一次：真的落盘了，不只是一次回执
+    const again = await call('/dsh-archify-projects/settings')
+    expect((again.json() as { value: { model: unknown } }).value.model).toEqual({
+      provider: 'dsh',
+      model: 'deepseek-v4',
+    })
+  })
+
+  test('PUT /settings 模型不在目录里 → 400', async () => {
+    withCatalog(CATALOG)
+    const res = await call('/dsh-archify-projects/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ model: { provider: 'dsh', model: 'ghost' } }),
+    })
+    expect(res.status).toBe(400)
+    expect((res.json() as { error: { code: string } }).error.code).toBe('bad-request')
+  })
+
+  test('PUT /settings 缺 provider/model → 400', async () => {
+    withCatalog(CATALOG)
+    const res = await call('/dsh-archify-projects/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ model: { provider: 'dsh' } }),
+    })
+    expect(res.status).toBe(400)
+  })
+
+  test('PUT /settings 传 null = 清除选择，回到跟随宿主默认', async () => {
+    withCatalog(CATALOG)
+    await call('/dsh-archify-projects/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ model: { provider: 'dsh', model: 'deepseek-v4' } }),
+    })
+    const cleared = await call('/dsh-archify-projects/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ model: null }),
+    })
+    expect((cleared.json() as { value: { model: unknown } }).value.model).toBeNull()
+  })
+
+  test('宿主列不出模型时不拿空目录当拒绝理由（手工路由仍可存）', async () => {
+    withCatalog(null)
+    const res = await call('/dsh-archify-projects/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ model: { provider: 'custom', model: 'local' } }),
+    })
+    expect(res.status).toBe(200)
+    expect((res.json() as { value: { model: unknown } }).value.model).toEqual({
+      provider: 'custom',
+      model: 'local',
+    })
   })
 })

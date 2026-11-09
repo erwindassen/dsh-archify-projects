@@ -245,6 +245,25 @@ export const PAGE_CSS = `
 
 
 .dap-dialog--wide { width: 680px; }
+
+/* 头部图标按钮（设置齿轮）：与 dap-btn--sm 同高，窄一点 */
+.dap-iconbtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: var(--dsw-radius-md);
+  border: 1px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-label-secondary); cursor: pointer;
+}
+.dap-iconbtn:hover { color: var(--dsw-alias-label-primary); border-color: var(--dsw-alias-border-l2); }
+
+/* 设置弹窗的模型下拉：原生 select 最省事，长列表也能滚动 */
+.dap-select {
+  min-width: 240px; max-width: 380px; height: 28px; padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary);
+  font: inherit; font-size: 12px; outline: none; cursor: pointer;
+}
+.dap-select:focus { border-color: var(--dsw-alias-border-l3); }
+.dap-hint--warn { color: var(--dsw-alias-state-warning-primary, var(--dsw-alias-label-tertiary)); }
 .dap-typebar { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 8px; }
 .dap-type-tag {
   display: inline-flex; align-items: center; gap: 5px; height: 27px; padding: 0 9px;

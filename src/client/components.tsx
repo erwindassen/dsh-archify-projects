@@ -7,6 +7,8 @@
 
 import { useMemo, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
+import type { ModelRef, SettingsValue } from '../shared/protocol.js'
+import { modelKey } from '../shared/model-key.js'
 import {
   ARCHIFY_TYPES,
   type ArchifyType,
@@ -377,6 +379,143 @@ export function NewDiagramDialog({
               disabled={busy || prompt.trim().length === 0}
             >
               {t('action.submit')}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** 齿轮图标（设置入口）。尺寸跟随字号，颜色跟随按钮。 */
+export function GearIcon({ size = 13 }: { size?: number }): ReactElement {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <circle cx="12" cy="12" r="3.1" />
+      <path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a1.9 1.9 0 1 1-2.7 2.7l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a1.9 1.9 0 1 1-3.8 0v-.1a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a1.9 1.9 0 1 1-2.7-2.7l.06-.06A1.6 1.6 0 0 0 4.6 15a1.6 1.6 0 0 0-1.47-.97H3a1.9 1.9 0 1 1 0-3.8h.1a1.6 1.6 0 0 0 1.47-1.05 1.6 1.6 0 0 0-.32-1.77l-.06-.06a1.9 1.9 0 1 1 2.7-2.7l.06.06A1.6 1.6 0 0 0 9 4.6a1.6 1.6 0 0 0 .97-1.47V3a1.9 1.9 0 1 1 3.8 0v.1a1.6 1.6 0 0 0 .97 1.47 1.6 1.6 0 0 0 1.77-.32l.06-.06a1.9 1.9 0 1 1 2.7 2.7l-.06.06a1.6 1.6 0 0 0-.32 1.77V9a1.6 1.6 0 0 0 1.47.97H21a1.9 1.9 0 1 1 0 3.8h-.1a1.6 1.6 0 0 0-1.47.97z" />
+    </svg>
+  )
+}
+
+/**
+ * 设置对话框：**只有一个字段**——分析用哪个模型。
+ *
+ * 模型选项不是插件编的，是宿主 `modelCatalog()` 列出来的（用户在 DSH 里
+ * 配好、当前真的能路由到的那些）。目录拿不到时只留「跟随宿主默认」一项，
+ * 并且把原因写在提示里，不假装能选。
+ */
+export function SettingsDialog({
+  t,
+  settings,
+  busy,
+  onClose,
+  onSubmit,
+}: {
+  t: Translate
+  settings: SettingsValue | null
+  busy: boolean
+  onClose: () => void
+  onSubmit: (model: ModelRef | null) => void
+}): ReactElement {
+  const catalog = settings?.catalog ?? null
+  const current = settings?.model ?? null
+  const [chosen, setChosen] = useState<string>(current === null ? '' : modelKey(current))
+  const options = catalog?.options ?? []
+  const selectedOption = options.find((option) => option.key === chosen) ?? null
+
+  const submit = (): void => {
+    onSubmit(
+      selectedOption === null
+        ? null
+        : { provider: selectedOption.provider, model: selectedOption.model },
+    )
+  }
+
+  const fallbackText =
+    catalog !== null && catalog.fallback !== null
+      ? `${catalog.fallback.provider} / ${catalog.fallback.model}`
+      : null
+
+  return (
+    <div
+      className="dap-mask"
+      role="presentation"
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+    >
+      <div className="dap-dialog" role="dialog" aria-modal="true" aria-label={t('dialog.settings')}>
+        <h2 className="dap-dialog__title">{t('dialog.settings')}</h2>
+        <p className="dap-dialog__sub">{t('dialog.settingsSub')}</p>
+
+        <div className="dap-dialog__row">
+          <span className="dap-field__label">{t('field.model')}</span>
+          <select
+            className="dap-select"
+            value={chosen}
+            onChange={(e) => setChosen(e.target.value)}
+            aria-label={t('field.model')}
+          >
+            <option value="">
+              {fallbackText === null
+                ? t('model.followDefault')
+                : t('model.followDefaultNamed', { model: fallbackText })}
+            </option>
+            {options.map((option) => (
+              <option key={option.key} value={option.key}>
+                {option.providerName} · {option.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="dap-hint">
+          {catalog === null || catalog.source === 'unavailable'
+            ? t('settings.unavailable')
+            : options.length === 0
+              ? t('settings.noModels')
+              : t('field.modelHint')}
+        </p>
+        {selectedOption?.description != null ? (
+          <p className="dap-hint">{selectedOption.description}</p>
+        ) : null}
+        {catalog !== null && catalog.failures.length > 0 ? (
+          <p className="dap-hint dap-hint--warn">
+            {t('settings.providerFailed', {
+              list: catalog.failures.map((f) => f.providerName).join('、'),
+            })}
+          </p>
+        ) : null}
+
+        <div className="dap-dialog__row">
+          <span className="dap-field__label">{t('field.sessionMode')}</span>
+          <span className="dap-hint">
+            {settings?.subagentSessions === true
+              ? t('settings.sessionSubagent')
+              : t('settings.sessionPlain')}
+          </span>
+        </div>
+
+        <div className="dap-dialog__foot">
+          <span className="dap-hint">{t('settings.scopeHint')}</span>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button className="dap-btn dap-btn--sm" onClick={onClose} disabled={busy}>
+              {t('action.cancel')}
+            </button>
+            <button
+              className="dap-btn dap-btn--sm dap-btn--primary"
+              onClick={submit}
+              disabled={busy}
+            >
+              {t('action.save')}
             </button>
           </div>
         </div>

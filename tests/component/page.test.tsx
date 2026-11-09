@@ -313,3 +313,104 @@ describe('StudioPage', () => {
     expect(await screen.findByText(/没有这个接口/)).toBeTruthy()
   })
 })
+
+describe('设置入口（模型选择）', () => {
+  const SETTINGS = {
+    model: null,
+    subagentSessions: true,
+    catalog: {
+      source: 'host',
+      fallback: { provider: 'dsh', model: 'deepseek-v4' },
+      failures: [],
+      options: [
+        {
+          key: 'dsh::deepseek-v4',
+          provider: 'dsh',
+          providerName: 'DeepSeek',
+          model: 'deepseek-v4',
+          name: 'DeepSeek V4',
+          description: null,
+        },
+        {
+          key: 'zifei::claude-sonnet',
+          provider: 'zifei',
+          providerName: '自费网关',
+          model: 'claude-sonnet',
+          name: 'Claude Sonnet',
+          description: null,
+        },
+      ],
+    },
+  }
+
+  test('头部有齿轮入口，弹窗里只有一个模型下拉，选项来自宿主目录', async () => {
+    stubFetch({
+      [ROUTES.projects]: { projects: [], workspacePath: '/ws' },
+      [ROUTES.settings]: SETTINGS,
+    })
+    const { container } = render(<StudioPage t={t} />)
+    await screen.findByText(DICT.zh['empty.title'] ?? '')
+
+    const gear = screen.getByRole('button', { name: DICT.zh['action.settings'] ?? '' })
+    expect(container.querySelector('.dap-iconbtn')).toBeTruthy()
+    fireEvent.click(gear)
+
+    const dialog = await screen.findByRole('dialog')
+    // 弹窗里只有一张「模型」下拉，没有第二个可输入控件
+    expect(dialog.querySelectorAll('select').length).toBe(1)
+    expect(dialog.querySelectorAll('input, textarea').length).toBe(0)
+    const select = screen.getByLabelText(DICT.zh['field.model'] ?? '') as HTMLSelectElement
+    const labels = [...select.options].map((option) => option.textContent)
+    expect(labels[0]).toBe(
+      (DICT.zh['model.followDefaultNamed'] ?? '').replace('{model}', 'dsh / deepseek-v4'),
+    )
+    expect(labels).toContain('DeepSeek · DeepSeek V4')
+    expect(labels).toContain('自费网关 · Claude Sonnet')
+  })
+
+  test('选一个模型并保存 → PUT /settings 带上 provider/model', async () => {
+    const calls = stubFetch({
+      [ROUTES.projects]: { projects: [], workspacePath: '/ws' },
+      [ROUTES.settings]: SETTINGS,
+      [`PUT ${ROUTES.settings}`]: {
+        ...SETTINGS,
+        model: { provider: 'zifei', model: 'claude-sonnet' },
+      },
+    })
+    render(<StudioPage t={t} />)
+    await screen.findByText(DICT.zh['empty.title'] ?? '')
+    fireEvent.click(screen.getByRole('button', { name: DICT.zh['action.settings'] ?? '' }))
+
+    fireEvent.change(await screen.findByLabelText(DICT.zh['field.model'] ?? ''), {
+      target: { value: 'zifei::claude-sonnet' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: DICT.zh['action.save'] ?? '保存' }))
+
+    await waitFor(() => {
+      const put = calls.find((call) => call.method === 'PUT')
+      expect(put?.url).toBe(ROUTES.settings)
+      expect(put?.body).toEqual({ model: { provider: 'zifei', model: 'claude-sonnet' } })
+    })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+  })
+
+  test('宿主没有模型目录时只留「跟随宿主默认」，且不假装能选', async () => {
+    stubFetch({
+      [ROUTES.projects]: { projects: [], workspacePath: '/ws' },
+      [ROUTES.settings]: {
+        model: null,
+        subagentSessions: false,
+        catalog: { source: 'unavailable', fallback: null, failures: [], options: [] },
+      },
+    })
+    render(<StudioPage t={t} />)
+    await screen.findByText(DICT.zh['empty.title'] ?? '')
+    fireEvent.click(screen.getByRole('button', { name: DICT.zh['action.settings'] ?? '' }))
+
+    const dialog = await screen.findByRole('dialog')
+    const select = screen.getByLabelText(DICT.zh['field.model'] ?? '') as HTMLSelectElement
+    expect(select.options.length).toBe(1)
+    expect(dialog.textContent).toContain(DICT.zh['settings.unavailable'] ?? '')
+    expect(dialog.textContent).toContain(DICT.zh['settings.sessionPlain'] ?? '')
+  })
+})

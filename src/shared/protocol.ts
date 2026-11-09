@@ -40,6 +40,8 @@ export const ROUTES = {
   childQa: (id: string, qaId: string) =>
     `${ROUTE_PREFIX}/projects/${encodeURIComponent(id)}/qa/${encodeURIComponent(qaId)}/child`,
   runs: (id: string) => `${ROUTE_PREFIX}/projects/${encodeURIComponent(id)}/runs`,
+  /** 插件级设置（目前只有「分析用哪个模型」）。 */
+  settings: `${ROUTE_PREFIX}/settings`,
   artifact: (relativePath: string) =>
     `${ROUTE_PREFIX}/artifact/${relativePath
       .split(/[\\/]+/)
@@ -183,6 +185,69 @@ export interface QaActionValue {
 export interface RunValue {
   readonly project: Project
   readonly run: { readonly id: string; readonly kind: RunKind; readonly sessionId: string | null }
+}
+
+// ------------------------------------------------------------------ 设置（模型）
+
+/**
+ * 一条模型路由：宿主 catalog 里的 `provider / model`，带上可选的推理强度。
+ *
+ * **字段名与 DSH 的 `ModelSelection` 一致**（provider / model / reasoningEffort），
+ * 这样宿主侧可以原样交给 `agents.create({ agentOptions })`，不做翻译。
+ */
+export interface ModelRef {
+  readonly provider: string
+  readonly model: string
+  readonly reasoningEffort?: string
+}
+
+/** 页面下拉里的一项。`key` 是稳定标识，用来做 `<option value>` 与相等比较。 */
+export interface ModelOption {
+  readonly key: string
+  readonly provider: string
+  /** provider 的显示名（宿主 catalog 给的）。 */
+  readonly providerName: string
+  readonly model: string
+  /** model 的显示名。 */
+  readonly name: string
+  readonly description: string | null
+}
+
+/** 宿主里有、但这次没能列出模型的 provider（网络/凭据问题）。页面只在角上提示。 */
+export interface ModelFailure {
+  readonly provider: string
+  readonly providerName: string
+  readonly message: string
+}
+
+/**
+ * 宿主的模型目录（收纳后的扁平形状）。
+ *
+ * 插件**不定义**模型：所有选项都来自 `sessionController.modelCatalog()`，
+ * 也就是用户在 DSH 里配好、当前真的能路由的那些。`source: 'unavailable'`
+ * 表示宿主没提供这个能力（老版本），页面会退化成「跟随宿主默认」。
+ */
+export interface ModelCatalogValue {
+  readonly options: readonly ModelOption[]
+  /** 宿主给未配置会话用的默认路由；null 表示宿主自己也没定。 */
+  readonly fallback: ModelRef | null
+  readonly failures: readonly ModelFailure[]
+  readonly source: 'host' | 'unavailable'
+}
+
+/** GET /settings */
+export interface SettingsValue {
+  /** 插件当前选的模型；null = 跟随宿主默认。 */
+  readonly model: ModelRef | null
+  readonly catalog: ModelCatalogValue
+  /** 分析会话是不是以「子代理会话」方式起（宿主不支持时为 false）。 */
+  readonly subagentSessions: boolean
+}
+
+/** PUT /settings */
+export interface PatchSettingsRequest {
+  /** null 或省略 = 清除选择，回到跟随宿主默认。 */
+  readonly model?: ModelRef | null
 }
 
 /** 概念表回执（GET /projects/:id 里已带 concepts，这里留给未来单独刷新）。 */

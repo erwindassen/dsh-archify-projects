@@ -12,6 +12,7 @@
  *   - 提问：只读（read / glob / grep / skill），上下文只有这张图 + 概念表 + 代码库。
  */
 
+import { randomUUID } from 'node:crypto'
 import { readFile, readdir, stat } from 'node:fs/promises'
 import path from 'node:path'
 import {
@@ -40,16 +41,21 @@ import { projectDir, workspaceRoot, type ResolvedConfig } from './config.js'
 import {
   serviceOf,
   type AgentLike,
+  type AgentModelLike,
+  type AgentPresetsLike,
+  type AgentsLike,
   type HostContext,
   type SessionControllerLike,
   type SessionProjectionsLike,
 } from './context.js'
+import type { ModelRef } from '../shared/protocol.js'
 import {
   allowedToolNames,
   readonlyToolNames,
   tightenAgent,
   tightenReadOnlyAgent,
 } from './policy.js'
+import { readSettings } from './settings.js'
 import type { ProjectStore } from './store.js'
 import { ensureProjectWorkspace } from './workspace.js'
 
@@ -271,9 +277,20 @@ export class Runner {
   /**
    * 建会话并投递提示词。
    *
-   * 优先 `sessionController`（宿主的标准会话命令面）；没有这个服务时退回
-   * `agents.createSession` + `agent.followup`。两条路都用同一个 preset，
-   * 限制不会因为走哪条路而消失。
+   * **首选「子代理会话」**：直接用 `ctx.agents.create` 建一个 `origin: 'subagent'`
+   * 的 agent，preset 通过 `agentPresets.mount()` 在它的 setup 作用域里装上，
+   * 模型走 `agentOptions`（用户在设置里选的，或宿主默认）。
+   *
+   * 这条路满足三件在 `sessionController` 那条路上做不到的事：
+   *   1. 会话被标成子代理 —— DSH 侧边栏的会话列表按 `origin === 'subagent'`
+   *      过滤，分析不再往用户的对话列表里塞一条条「新会话」；
+   *   2. 每次运行**可以带自己的模型**，而不会顺手改掉宿主里那个全局默认模型
+   *      （`sessionController.selectModel` 会把选择存成默认，这是它的契约）；
+   *   3. preset 的组装在 setup 里完成，工具白名单与 persona 与原来完全一致。
+   *
+   * 宿主没有 `agents.create` / `agentPresets`（或建会话抛错）时，退回
+   * `sessionController.create` + `prompt`，再退 `agents.createSession`：
+   * 功能不因宿主版本而消失，只是会话回到「普通会话 + 宿主默认模型」。
    */
   private async openSession(
     workspaceDir: string,
@@ -283,11 +300,22 @@ export class Runner {
     const { ctx, config } = this.deps
     const allow = mode === 'ask' ? readonlyToolNames() : allowedToolNames()
     const presetId = mode === 'ask' ? config.askPresetId : config.presetId
+    const model = await selectedModel(config)
+
+    const subagent = await this.openSubagentSession(workspaceDir, presetId, model, allow, mode)
+    if (subagent !== null) {
+      deliver(this.deps, subagent.agent, prompt)
+      return subagent.sessionId
+    }
+
     const controller = serviceOf<SessionControllerLike>(ctx, 'sessionController')
     if (controller !== undefined) {
       const created = await controller.create({ cwd: workspaceDir, agentPreset: presetId })
       // 会话刚建好、还没开 turn：这时候收口工具面最干净
       this.tighten(created.sessionId, allow, mode)
+      // 老路也能吃到设置里的模型：直接改这条会话下一步的路由，
+      // 不走 `selectModel`（那个会把选择写成宿主的全局默认）。
+      applyModel(agentOf(ctx, created.sessionId), model)
       if (typeof controller.prompt === 'function') {
         await controller.prompt(
           {
@@ -321,26 +349,78 @@ export class Runner {
     })
     const agent = created.agent
     this.tighten(agent.id ?? null, allow, mode)
-    agent.followup({
-      id: newRequestId(),
-      content: [{ type: 'text', text: prompt }],
-      source: { kind: 'user' },
-    } as never)
+    applyModel(agent, model)
+    deliver(this.deps, agent, prompt)
     const sessionId = (agent as unknown as { id?: string }).id ?? null
     if (sessionId === null) throw new RunnerUnavailable('用 agents.createSession 起的会话没有 id')
     return sessionId
   }
 
+  /**
+   * 建一个子代理会话（`origin: 'subagent'`）。
+   *
+   * 返回 null 表示「这条路走不了」（宿主缺服务 / 建会话失败），调用方退回普通会话。
+   * 失败只记一条 warn：子代理是**增强**，不是功能前提。
+   */
+  private async openSubagentSession(
+    workspaceDir: string,
+    presetId: string,
+    model: ModelRef | null,
+    allow: readonly string[],
+    mode: 'draw' | 'ask',
+  ): Promise<{ sessionId: string; agent: AgentLike } | null> {
+    const { ctx } = this.deps
+    const agents = serviceOf<AgentsLike>(ctx, 'agents')
+    const presets = serviceOf<AgentPresetsLike>(ctx, 'agentPresets')
+    if (agents?.create === undefined || presets === undefined) return null
+
+    try {
+      const preset = await presets.resolve(presetId)
+      const sessionId = `session-${randomUUID()}`
+      const handle = await agents.create({
+        sessionId,
+        meta: {
+          cwd: workspaceDir,
+          agentPreset: preset.id,
+          // 会话在 DSH 里算「子代理」：不占用户的对话列表
+          origin: 'subagent',
+          // 递归预算：本插件的分析不会再往下派子代理，固定 1 层
+          delegationDepth: 1,
+        },
+        ...(model === null ? {} : { agentOptions: { ...model } }),
+        setup: async (agentCtx) => {
+          await presets.mount(agentCtx, preset.id)
+        },
+      })
+      const agent = handle.agent
+      // 在 setup 之后、第一条 prompt 之前收口工具面：只影响这一条会话
+      const warn = this.warn.bind(this)
+      if (agent.ctx !== undefined) {
+        if (mode === 'ask') tightenReadOnlyAgent(agent.ctx, warn)
+        else tightenAgent(agent.ctx, allow, warn)
+      } else {
+        warn('子代理会话没有 agent 作用域：工具白名单未生效')
+      }
+      return { sessionId, agent }
+    } catch (err) {
+      this.warn(`建子代理会话失败，退回普通会话：${describeError(err)}`)
+      return null
+    }
+  }
+
+  /** 统一的 warn（日志器不可用不影响运行）。 */
+  private warn(message: string): void {
+    try {
+      this.deps.ctx.logger.warn(`[dsh-archify-projects] ${message}`)
+    } catch {
+      // 日志器不可用不影响运行
+    }
+  }
+
   /** 对该会话的 agent 作用域装工具白名单与守卫。 */
   private tighten(sessionId: string | null, allow: readonly string[], mode: 'draw' | 'ask'): void {
     const { ctx } = this.deps
-    const warn = (message: string): void => {
-      try {
-        ctx.logger.warn(`[dsh-archify-projects] ${message}`)
-      } catch {
-        // 日志器不可用不影响运行
-      }
-    }
+    const warn = (message: string): void => this.warn(message)
     if (sessionId === null) {
       warn('会话没有 id：跳过工具收口')
       return
@@ -1078,6 +1158,59 @@ async function firstHtmlIn(dir: string): Promise<string | null> {
   } catch {
     return null
   }
+}
+
+/** 宿主能不能自己建「子代理会话」（设置页据此显示会话形态）。 */
+export function canCreateSubagentSessions(ctx: HostContext): boolean {
+  const agents = serviceOf<AgentsLike>(ctx, 'agents')
+  const presets = serviceOf<AgentPresetsLike>(ctx, 'agentPresets')
+  if (agents?.create === undefined || presets === undefined) return false
+  return typeof presets.mount === 'function' && typeof presets.resolve === 'function'
+}
+
+/** 读设置里选的模型；读不到（文件缺失/损坏）就是「跟随宿主默认」。 */
+async function selectedModel(config: ResolvedConfig): Promise<ModelRef | null> {
+  try {
+    const settings = await readSettings(config)
+    return settings.model
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 把模型应用到一条**已经建好**的会话上。
+ *
+ * 走 `agent.model.select()`：它只改这条会话下一步的路由，不会像
+ * `sessionController.selectModel()` 那样把选择存成宿主的全局默认。
+ */
+function applyModel(agent: AgentLike | undefined, model: ModelRef | null): void {
+  if (model === null || agent === undefined) return
+  const selection = agent.model as AgentModelLike | undefined
+  if (selection === undefined) return
+  try {
+    selection.select({ ...model })
+  } catch {
+    // 宿主版本没有这个面：会话就用它自己的默认模型，不影响出图
+  }
+}
+
+/** 投一条用户消息（`followup` 会把消息排成独立的一轮并唤醒驱动）。 */
+function deliver(deps: RunnerDeps, agent: AgentLike, prompt: string): void {
+  try {
+    agent.followup({
+      id: newRequestId(),
+      role: 'user',
+      content: [{ type: 'text', text: prompt }],
+      source: { kind: 'user' },
+    })
+  } catch (err) {
+    deps.ctx.logger?.warn?.(`[dsh-archify-projects] 投递提示词失败：${describeError(err)}`)
+  }
+}
+
+function describeError(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
 /** 超时包装。 */

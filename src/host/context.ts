@@ -146,7 +146,6 @@ export interface ScopedAgentCtx {
   effect?: (fn: () => (() => void) | void, label?: string) => unknown
 }
 
-/** `ctx.agents`（`@deepseek-ai/dsh-agent`）。 */
 /**
  * `ctx.sessionProjections` 的只读面。
  *
@@ -160,15 +159,33 @@ export interface SessionProjectionsLike {
   ): { readonly values?: Readonly<Record<string, unknown>> }
 }
 
+/**
+ * 一个活着的 agent（`ctx.agents.get(id)` 或 `agents.create()` 拿到的东西）。
+ *
+ * 只声明本插件真的用到的那几个成员：工具作用域、模型选择、投递与等待。
+ */
 export interface AgentLike {
   readonly id?: string
   readonly ctx?: ScopedAgentCtx
-  followup(message: {
-    content: readonly { type: string; text?: string }[]
-    source: { kind: string }
-  }): unknown
+  /** 会话的模型选择面（`agent.model.select`）；宿主没装模型选择时没有。 */
+  readonly model?: AgentModelLike
+  followup(message: AgentMessageLike): unknown
   whenIdle(): Promise<void>
   readonly session?: unknown
+}
+
+/** `agent.model`：只声明本插件用到的「改下一步的路由」这一半。 */
+export interface AgentModelLike {
+  select(selection: { provider: string; model: string; reasoningEffort?: string }): void
+  current?(): { provider: string; model: string; reasoningEffort?: string } | undefined
+}
+
+/** 一条用户消息的形状（`followup` 的入参）。字段与 `dsh-llm` 的 `UserMessage` 对齐。 */
+export interface AgentMessageLike {
+  readonly id: string
+  readonly role: 'user'
+  readonly content: readonly { type: string; text?: string }[]
+  readonly source: { kind: string }
 }
 
 export interface AgentHandleLike {
@@ -176,13 +193,41 @@ export interface AgentHandleLike {
   dispose(): Promise<void>
 }
 
+/** `ctx.agents`：会话查询 + 直接建 agent（子代理会话走这条）。 */
 export interface AgentsLike {
-  create(options: {
-    sessionId?: string
-    agentOptions?: { provider?: string; model?: string }
+  /**
+   * 直接建一个 agent（`@deepseek-ai/dsh-agent` 的 `AgentRegistry.create`）。
+   *
+   * 与 `sessionController.create` 的区别：能指定 `meta`（`origin: 'subagent'`、
+   * `delegationDepth`）与 `agentOptions`（provider/model），也就是「用哪个模型」
+   * 和「这条会话算什么」都由调用方决定，而且不会改动宿主的全局默认模型。
+   */
+  create?(options: {
+    sessionId: string
+    meta?: {
+      cwd?: string
+      parentSession?: string
+      isSeeded?: boolean
+      origin?: 'subagent'
+      delegationDepth?: number
+      agentPreset?: string
+    }
+    agentOptions?: { provider?: string; model?: string; reasoningEffort?: string }
     setup?: (agentCtx: unknown, agent: AgentLike) => void | Promise<void>
   }): Promise<AgentHandleLike>
   get(id: string): AgentLike | undefined
+}
+
+/**
+ * `ctx.agentPresets`（`@deepseek-ai/dsh-agent-preset-registry`）。
+ *
+ * 只有两个成员：`resolve()` 把 preset id 校验成当前可用的 id，`mount()` 在
+ * agent 的 setup 作用域里把该 preset 的组合（工具、persona、skill）装上去。
+ * 缺了这个服务就没法自己建会话 —— 走 `sessionController` 那条老路。
+ */
+export interface AgentPresetsLike {
+  resolve(id?: string): Promise<{ id: string }>
+  mount(ctx: unknown, id?: string): Promise<unknown>
 }
 
 /** 本插件拿到的宿主 ctx。全部可选 —— 缺服务时走降级并在日志里说清楚。 */

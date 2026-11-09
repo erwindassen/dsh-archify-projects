@@ -38,10 +38,10 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   throw new ApiError(code, message)
 }
 
-/** POST/PATCH 的便捷封装。 */
+/** POST/PUT/PATCH/DELETE 的便捷封装。 */
 export function send<T>(
   path: string,
-  method: 'POST' | 'PATCH' | 'DELETE',
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   body?: unknown,
 ): Promise<T> {
   return api<T>(path, {

@@ -17,12 +17,12 @@ import { ledgerPath, resolveConfig, workspaceRoot, type RawPluginConfig } from '
 import { serviceOf, type HostContext } from './context.js'
 import { makeFence } from './http.js'
 import { createDispatcher } from './routes.js'
-import { reconcileArtifacts, Runner } from './runner.js'
+import { canCreateSubagentSessions, reconcileArtifacts, Runner } from './runner.js'
 import { ProjectStore } from './store.js'
 import { ensureWorkspace } from './workspace.js'
 
 /** 与 package.json 的 version 保持一致（有单测守着）。 */
-export const VERSION = '0.1.1'
+export const VERSION = '0.2.0'
 
 /** 插件入口。 */
 export function apply(ctx: HostContext, rawConfig?: unknown): void {
@@ -55,6 +55,8 @@ export function apply(ctx: HostContext, rawConfig?: unknown): void {
     skillDir,
     version: VERSION,
     hasSessionService,
+    // 惰性探测：此刻宿主服务可能还没装好（见 RouteState 的注释）
+    subagentSessions: () => canCreateSubagentSessions(ctx),
   })
 
   // 路由必须挂在 inject 出来的子 ctx 上：cordis 的 proxy 在没 inject 时读

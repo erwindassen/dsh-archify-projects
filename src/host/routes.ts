@@ -18,10 +18,12 @@ import type {
   HealthValue,
   PatchDiagramRequest,
   PatchProjectRequest,
+  PatchSettingsRequest,
   ProjectsValue,
   ProjectValue,
   QaActionValue,
   RunValue,
+  SettingsValue,
   UpdateValue,
 } from '../shared/protocol.js'
 import {
@@ -49,7 +51,9 @@ import {
   sendError,
   sendOk,
 } from './http.js'
+import { catalogHas, readModelCatalog } from './models.js'
 import { RunnerBusy, RunnerUnavailable, type Runner } from './runner.js'
+import { readSettings, sanitizeModelRef, writeSettings } from './settings.js'
 import type { ProjectStore } from './store.js'
 import { confineToRoot, isDirectory } from './workspace.js'
 
@@ -63,6 +67,13 @@ export interface RouteState {
   readonly skillDir: () => Promise<string | null>
   readonly version: string
   readonly hasSessionService: boolean
+  /**
+   * 分析会话能不能以「子代理会话」方式起（宿主有 `agents.create` + `agentPresets`）。
+   *
+   * 是**惰性探测**而不是启动期快照：插件 apply 时宿主还没把 sessionController /
+   * agentPresets 装好，那一刻探测必然为 false，页面就会误报「宿主不支持」。
+   */
+  readonly subagentSessions: () => boolean
 }
 
 /** 生成项目 id。 */
@@ -113,6 +124,8 @@ async function route(
   const method = methodOf(req)
 
   if (rest === '/health' && method === 'GET') return handleHealth(state, res)
+  if (rest === '/settings' && method === 'GET') return handleGetSettings(state, res)
+  if (rest === '/settings' && method === 'PUT') return handlePutSettings(state, req, res)
   if (rest === '/projects' && method === 'GET') return handleList(state, res)
   if (rest === '/projects' && method === 'POST') return handleCreate(state, req, res)
   if (rest.startsWith('/artifact/') && method === 'GET') {
@@ -219,6 +232,56 @@ function handleHealth(state: RouteState, res: import('./context.js').WebResponse
     }
     sendOk(res, value)
   })
+}
+
+async function handleGetSettings(
+  state: RouteState,
+  res: import('./context.js').WebResponse,
+): Promise<void> {
+  const value = await settingsValueOf(state)
+  sendOk(res, value)
+}
+
+/**
+ * 改设置（目前只有一个字段：分析用哪个模型）。
+ *
+ * 校验分两层：形状（`{provider, model}` 非空）与**可用性**（必须在宿主当前
+ * 模型目录里）。第二层只在宿主确实列得出模型时生效 —— 宿主没这个能力时，
+ * 不该因为「目录为空」就把用户手动写进来的路由判死。
+ */
+async function handlePutSettings(
+  state: RouteState,
+  req: import('./context.js').WebRequest,
+  res: import('./context.js').WebResponse,
+): Promise<void> {
+  const body = (await readJsonObject(req)) as Partial<PatchSettingsRequest>
+  const clearing = body.model === undefined || body.model === null
+  const requested = clearing ? null : sanitizeModelRef(body.model)
+  if (!clearing && requested === null) {
+    throw new BadRequest('model 必须是 { provider, model }', 'bad-request')
+  }
+  const catalog = await readModelCatalog(state.ctx)
+  if (requested !== null && catalog.options.length > 0 && !catalogHas(catalog, requested)) {
+    throw new BadRequest(
+      `宿主的模型目录里没有 ${requested.provider}/${requested.model}`,
+      'bad-request',
+    )
+  }
+  const saved = await writeSettings(state.config, { model: requested })
+  const value: SettingsValue = {
+    model: saved.model,
+    catalog,
+    subagentSessions: state.subagentSessions(),
+  }
+  sendOk(res, value)
+}
+
+async function settingsValueOf(state: RouteState): Promise<SettingsValue> {
+  const [settings, catalog] = await Promise.all([
+    readSettings(state.config),
+    readModelCatalog(state.ctx),
+  ])
+  return { model: settings.model, catalog, subagentSessions: state.subagentSessions() }
 }
 
 async function handleList(

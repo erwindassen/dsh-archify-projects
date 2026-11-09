@@ -11,10 +11,12 @@ import type { ReactElement } from 'react'
 import { ROUTES } from '../shared/protocol.js'
 import type {
   AskValue,
+  ModelRef,
   ProjectValue,
   ProjectsValue,
   QaActionValue,
   RunValue,
+  SettingsValue,
   UpdateValue,
 } from '../shared/protocol.js'
 import {
@@ -33,8 +35,10 @@ import { api, ApiError, send } from './api.js'
 import {
   Chip,
   Dot,
+  GearIcon,
   NewDiagramDialog,
   NewProjectDialog,
+  SettingsDialog,
   clockText,
   type DiagramDraft,
 } from './components.js'
@@ -73,7 +77,9 @@ export function StudioPage({ t }: { t: Translate }): ReactElement {
   const [projectId, setProjectId] = useState<string | null>(null)
   const [diagramId, setDiagramId] = useState<string | null>(null)
   const [tab, setTab] = useState<Tab>('info')
-  const [dialog, setDialog] = useState<'project' | 'diagram' | null>(null)
+  const [dialog, setDialog] = useState<'project' | 'diagram' | 'settings' | null>(null)
+  // 设置（模型选择）：拿不到就保持 null，设置面板退化成「跟随宿主默认」，不报错打扰用户
+  const [settings, setSettings] = useState<SettingsValue | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ text: string; error: boolean } | null>(null)
   const [question, setQuestion] = useState('')
@@ -106,6 +112,23 @@ export function StudioPage({ t }: { t: Translate }): ReactElement {
   useEffect(() => {
     void load()
   }, [load])
+
+  // 设置只拉一次：模型目录是部署级事实，不必跟着项目轮询。
+  // 失败静默 —— 设置面板退化成「跟随宿主默认」，不往页面上甩错误。
+  useEffect(() => {
+    let alive = true
+    void (async () => {
+      try {
+        const value = await api<SettingsValue>(ROUTES.settings)
+        if (alive) setSettings(value)
+      } catch {
+        // 宿主版本没有 /settings（或栅栏拒了）时保持 null
+      }
+    })()
+    return () => {
+      alive = false
+    }
+  }, [])
 
   const running = state.projects.some((project) => isRunning(project))
   useEffect(() => {
@@ -158,6 +181,20 @@ export function StudioPage({ t }: { t: Translate }): ReactElement {
     try {
       const value = await send<UpdateValue>(ROUTES.update(target.id), 'POST')
       applyProject(value.project)
+    } catch (err) {
+      fail(err)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const saveSettings = async (model: ModelRef | null): Promise<void> => {
+    setBusy('settings')
+    setNotice(null)
+    try {
+      const value = await send<SettingsValue>(ROUTES.settings, 'PUT', { model })
+      if (mounted.current) setSettings(value)
+      setDialog(null)
     } catch (err) {
       fail(err)
     } finally {
@@ -321,6 +358,14 @@ export function StudioPage({ t }: { t: Translate }): ReactElement {
           </div>
           <div className="dap-head__actions">
             <button
+              className="dap-iconbtn"
+              onClick={() => setDialog('settings')}
+              title={t('action.settings')}
+              aria-label={t('action.settings')}
+            >
+              <GearIcon />
+            </button>
+            <button
               className="dap-btn dap-btn--sm dap-btn--primary"
               onClick={() => void runUpdate(project)}
               disabled={busy !== null || isRunning(project)}
@@ -355,6 +400,15 @@ export function StudioPage({ t }: { t: Translate }): ReactElement {
             onNewDiagram={() => setDialog('diagram')}
           />
         </div>
+        {dialog === 'settings' ? (
+          <SettingsDialog
+            t={t}
+            settings={settings}
+            busy={busy !== null}
+            onClose={() => setDialog(null)}
+            onSubmit={(model) => void saveSettings(model)}
+          />
+        ) : null}
         {dialog === 'diagram' ? (
           <NewDiagramDialog
             t={t}
@@ -377,6 +431,14 @@ export function StudioPage({ t }: { t: Translate }): ReactElement {
           <p className="dap-head__sub">{t('page.subtitle')}</p>
         </div>
         <div className="dap-head__actions">
+          <button
+            className="dap-iconbtn"
+            onClick={() => setDialog('settings')}
+            title={t('action.settings')}
+            aria-label={t('action.settings')}
+          >
+            <GearIcon />
+          </button>
           <button
             className="dap-btn dap-btn--sm"
             onClick={() => void updateAll()}
@@ -454,6 +516,15 @@ export function StudioPage({ t }: { t: Translate }): ReactElement {
           </>
         )}
       </div>
+      {dialog === 'settings' ? (
+        <SettingsDialog
+          t={t}
+          settings={settings}
+          busy={busy !== null}
+          onClose={() => setDialog(null)}
+          onSubmit={(model) => void saveSettings(model)}
+        />
+      ) : null}
       {dialog === 'project' ? (
         <NewProjectDialog
           t={t}
