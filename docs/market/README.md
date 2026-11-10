@@ -109,3 +109,28 @@ git push -u origin update-entry && gh pr create --repo awesome-dsh-plugin/awesom
 - 在你**自己机器**上，dsh-market 打开时会实时拉 `plugins.json`；如果拉不到，可在
   **插件 → 发现 → 索引源**里加 `https://cdn.jsdelivr.net/npm/dsh-plugin-catalog/index.json`。
 - 没合并之前，dsh-market 里搜不到 —— 因为它只显示 curated 列表里的条目。
+
+## 市场详情页的截图：仓库根 `screenshots.json`
+
+市场详情页那块 AppStore 式截图**不从条目 YAML 来，也不从 README 抽**——它是
+`awesome-dsh-plugin` 的 `probe-screenshots.mjs` 读**插件自己仓库**里、`package.json`
+旁边的 `screenshots.json`（1–8 条**相对路径**，按仓库 HEAD 解析成 raw 绝对地址）：
+
+```json
+[
+  "docs/verify/shot-atlas.png",
+  "docs/verify/shot-workbench.png",
+  "docs/verify/shot-qa.png",
+  "docs/verify/shot-dialog.png"
+]
+```
+
+几条硬规矩（都写在它的 `contributing.md` 里）：
+
+- **改截图只推自己的仓库**，不用再提 PR、不用等维护者，下一个 nightly 自动生效；
+- 相对路径优先（改名会立刻在自己仓库里暴露）；绝对 URL 只收 GitHub 托管
+  （`raw.githubusercontent.com` 等），第三方图床直接被拒；
+- 上限 8 张，404 的会被静默丢掉；不声明时该字段整个不出现，详情页就没有截图画廊
+  （README 正文照常在详情页底部渲染，那是另一条 `probe-readmes` 路径）；
+- 老的 `data/screenshots.json`（键是条目 URL）只是前 `screenshots.json` 时代的回退，
+  别往里加新键。本插件当初就是没声明这个文件，所以市场里一直看不到图。
