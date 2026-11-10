@@ -57,6 +57,34 @@ git push origin add-dsh-archify-projects
 
 **不要手改 README**：两份 README 由 `data/plugins/*.yml` 生成，合并后 CI 自动重生成。
 
+## 以后更新条目（已经在列表里了）
+
+条目首次合并后（本插件是 PR #13318），**再改只动自己那一个 yml**：
+
+```bash
+# 1. 本地改 docs/market/guicaiyue__dsh-archify-projects.yml
+# 2. 从上游最新 main 拉一个分支，只改 data/plugins/ 下自己那一条
+gh repo clone guicaiyue/awesome-dsh-plugin /tmp/mk/repo
+cd /tmp/mk/repo && git remote add upstream https://github.com/awesome-dsh-plugin/awesome-dsh-plugin.git
+git fetch upstream main && git checkout -B update-entry upstream/main
+# 把本地 yml 的内容按「只改自己那条」的粒度写进去
+git commit -am "Refresh guicaiyue/dsh-archify-projects description (vX.Y.Z)"
+git push -u origin update-entry && gh pr create --repo awesome-dsh-plugin/awesome-dsh-plugin \
+  --base main --head guicaiyue:update-entry
+```
+
+规矩（`contributing.md`）：
+
+- **一个文件就是全部投稿**，README 别手改，合并后 CI 重生成；
+- **不要碰别人的条目** —— gate 会把「这个 PR 改了哪些既有条目」列出来给评审看；
+- 描述必须**属实**：里面提到的数字、命令、API 都会被对着代码核；
+- `category` 选最贴近的即可，评审会直接改，不会因此打回；
+- 手写 `npm:` 键会被校验拒绝，映射由 nightly 从 registry 自动采集。
+
+参考：更新 v0.2.0 描述的那次 PR
+[#13762](https://github.com/awesome-dsh-plugin/awesome-dsh-plugin/pull/13762)
+（只改 en/zh 两行，`check` 与 `Submission gate` 全绿）。
+
 ## npm 版本号与下载量：不要加字段
 
 市场卡片上的「npm 版本 / 下载量」**不是条目字段**。`awesome-dsh-plugin` 的校验会拒绝
