@@ -77,7 +77,9 @@ export const PAGE_CSS = `
 .dap-card {
   border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-lg);
   background: var(--dsw-alias-bg-layer-1); padding: 14px; display: flex; flex-direction: column; gap: 10px;
-  cursor: pointer; text-align: left; width: 100%; transition: border-color .15s, box-shadow .15s;
+  cursor: pointer; text-align: left; width: 100%; min-width: 0; transition: border-color .15s, box-shadow .15s;
+  /* 宿主没有全局 border-box：不写死就会让 100% 宽 + 14px padding 溢出栅格列。 */
+  box-sizing: border-box;
 }
 .dap-card:hover { border-color: var(--dsw-alias-border-l3); box-shadow: var(--dsw-shadow-lv2); }
 .dap-card__top { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
@@ -85,16 +87,21 @@ export const PAGE_CSS = `
 .dap-repo__name { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dap-repo__path { font-size: 11px; color: var(--dsw-alias-label-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, monospace; }
 .dap-chips { display: flex; flex-wrap: wrap; gap: 5px; }
-.dap-thumbs { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+/* 图条：等宽分栏，行宽永远等于卡片内容宽。
+   旧的 1fr 1fr 会被子项的 min-content 撑宽（撑出卡片边框外），必须 minmax(0, 1fr)；
+   auto-fit 让「只有一张图」时自然占满整行，不再靠 grid-column: 1 / -1 单独拉长。 */
+.dap-thumbs { display: grid; grid-template-columns: repeat(auto-fit, minmax(165px, 1fr)); gap: 6px; }
 .dap-thumb {
   border: 1px solid var(--dsw-alias-border-l1); border-radius: var(--dsw-radius-md);
-  background: var(--dsw-alias-bg-layer-2); padding: 6px 8px; min-width: 0;
+  background: var(--dsw-alias-bg-layer-2); padding: 6px 8px;
+  min-width: 0; box-sizing: border-box;
 }
-.dap-thumb--wide { grid-column: 1 / -1; }
-.dap-thumb__title { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--dsw-alias-label-secondary); }
-.dap-thumb__title b { font-weight: 550; color: var(--dsw-alias-label-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dap-thumb__title { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11px; color: var(--dsw-alias-label-secondary); min-width: 0; }
+.dap-thumb__title b { flex: 1 1 auto; min-width: 0; font-weight: 550; color: var(--dsw-alias-label-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dap-thumb__title .dap-thumb__count { flex: none; }
 .dap-thumb__count { font-size: 10.5px; color: var(--dsw-alias-label-tertiary); }
-.dap-card__foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--dsw-alias-label-tertiary); }
+.dap-card__foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 11.5px; color: var(--dsw-alias-label-tertiary); min-width: 0; }
+.dap-card__foot > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------------------------------------------------------------- 工作台 */
 .dap-wb { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 12px; align-items: stretch; flex: 1; min-height: 0; }

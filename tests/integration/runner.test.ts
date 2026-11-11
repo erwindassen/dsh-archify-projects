@@ -238,6 +238,9 @@ describe('Runner', () => {
 
     const after = await store.get('prj_1')
     expect(after?.lastRun?.todos.map((todo) => todo.content)).toEqual(['读代码', '出图'])
+    // 成功的运行不允许留 in_progress：agent 收尾时常常来不及再写一次 todo_write，
+    // 台账要是原样存着，页面就会永远显示「正在：出图」。
+    expect(after?.lastRun?.todos.map((todo) => todo.status)).toEqual(['completed', 'completed'])
     expect(after?.lastRun?.usage).toEqual({
       uncachedInput: 1200,
       output: 300,
@@ -245,6 +248,24 @@ describe('Runner', () => {
       cacheWrite: 0,
     })
     expect(after?.usageTotal).toBe(2000)
+  })
+
+  test('失败的运行把残留的 in_progress 退回 pending，不假装完成', async () => {
+    const project = await seedProject()
+    const { ctx } = makeCtx({
+      finalText: '',
+      todos: [
+        { content: '读代码', status: 'completed' },
+        { content: '出图', status: 'in_progress' },
+      ],
+    })
+    const runner = new Runner({ ctx, store, config: config(), skillDir: async () => null })
+    await runner.start(project, 'create', ['structure', 'domain'])
+    await runner.whenSettled('prj_1')
+
+    const after = await store.get('prj_1')
+    expect(after?.lastRun?.status).toBe('failed')
+    expect(after?.lastRun?.todos.map((todo) => todo.status)).toEqual(['completed', 'pending'])
   })
 
   test('已有任务在跑时再点一次会被拒（不叠加第二次运行）', async () => {

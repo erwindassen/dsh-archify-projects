@@ -25,8 +25,10 @@ import {
   hasStaleRun,
   isRunning,
   isStale,
+  settleTodos,
   withDiagram,
   type Project,
+  type TodoItem,
 } from '../../src/shared/types.js'
 import { buildAskPrompt, buildRunPrompt, parseArtifactMarkers } from '../../src/shared/prompt.js'
 
@@ -499,5 +501,38 @@ describe('isRunning：宿主被 kill 留下的 running 不该把页面锁死', (
   test('时间戳坏了按过期处理，不按活着处理', () => {
     const now = Date.parse('2026-11-07T09:00:00.000Z')
     expect(isRunning(withRun('not-a-date'), now)).toBe(false)
+  })
+})
+
+describe('settleTodos：运行结束后不许留 in_progress', () => {
+  const todos: readonly TodoItem[] = [
+    { content: '读代码', status: 'completed' },
+    { content: '出图', status: 'in_progress' },
+    { content: '回报', status: 'pending' },
+  ]
+
+  test('运行中一律原样返回', () => {
+    expect(settleTodos(todos, 'running')).toBe(todos)
+  })
+
+  test('成功的运行把残留的 in_progress 记成完成', () => {
+    expect(settleTodos(todos, 'succeeded').map((todo) => todo.status)).toEqual([
+      'completed',
+      'completed',
+      'pending',
+    ])
+  })
+
+  test('失败的运行退回 pending，不假装完成', () => {
+    expect(settleTodos(todos, 'failed').map((todo) => todo.status)).toEqual([
+      'completed',
+      'pending',
+      'pending',
+    ])
+  })
+
+  test('没有 in_progress 时返回同一个引用，不做无意义的写盘', () => {
+    const done: readonly TodoItem[] = [{ content: '读代码', status: 'completed' }]
+    expect(settleTodos(done, 'succeeded')).toBe(done)
   })
 })

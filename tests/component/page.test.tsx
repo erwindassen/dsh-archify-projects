@@ -162,6 +162,48 @@ describe('StudioPage', () => {
     expect(screen.getAllByText('台账').length).toBeGreaterThan(0)
   })
 
+  test('总览卡片的图条不再有单独拉长的整行（横线不许长过卡片）', async () => {
+    stubFetch({ [ROUTES.projects]: { projects: [makeProject()], workspacePath: '/ws' } })
+    const { container } = render(<StudioPage t={t} />)
+    await screen.findByText('演示仓库')
+    const thumbs = container.querySelectorAll('.dap-thumb')
+    expect(thumbs.length).toBe(2)
+    // 曾经 `grid-column: 1 / -1` + `1fr 1fr` 会把结构图那条拉到卡片里最宽，
+    // 甚至压到卡片右边框外；现在两张图等宽分栏。
+    for (const thumb of thumbs) expect(thumb.classList.contains('dap-thumb--wide')).toBe(false)
+    expect(container.querySelector('.dap-atlas')).toBeTruthy()
+  })
+
+  test('运行结束后的 todo 不再显示转圈：最后一步是 ✓ 不是 in_progress', async () => {
+    const project = makeProject()
+    const ended = {
+      ...project,
+      lastRun: {
+        id: 'run_1',
+        kind: 'create' as const,
+        status: 'succeeded' as const,
+        sessionId: 'session_1',
+        startedAt: NOW,
+        finishedAt: NOW,
+        error: null,
+        note: null,
+        diagramIds: ['structure', 'domain'],
+        // 台账里真实出现过的形态：agent 收尾时没来得及把最后一步写成 completed
+        todos: [
+          { content: '读代码库结构', status: 'completed' as const },
+          { content: '回报产物标记与统计', status: 'in_progress' as const },
+        ],
+        usage: null,
+      },
+    }
+    stubFetch({ [ROUTES.projects]: { projects: [ended], workspacePath: '/ws' } })
+    const { container } = render(<StudioPage t={t} />)
+    fireEvent.click(await screen.findByText('演示仓库'))
+    await screen.findByText('回报产物标记与统计')
+    expect(container.querySelector('.dap-todo--now')).toBeNull()
+    expect(container.querySelectorAll('.dap-todo--done').length).toBe(2)
+  })
+
   test('新建图：prompt + 临时时效会带进请求', async () => {
     const project = makeProject()
     const created = makeProject({

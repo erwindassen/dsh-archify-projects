@@ -24,9 +24,11 @@ import {
   findDiagram,
   isRunning,
   isStale,
+  settleTodos,
   usageTotalOf,
   type DiagramState,
   type Project,
+  type RunStatus,
   type TodoItem,
   type TokenUsage,
 } from '../shared/types.js'
@@ -595,10 +597,7 @@ function AtlasCard({
       </div>
       <div className="dap-thumbs">
         {diagrams.slice(0, 3).map((item) => (
-          <div
-            key={item.id}
-            className={item.kind === 'structure' ? 'dap-thumb dap-thumb--wide' : 'dap-thumb'}
-          >
+          <div key={item.id} className="dap-thumb">
             <div className="dap-thumb__title">
               <b>{item.title}</b>
               <span className="dap-thumb__count">
@@ -913,7 +912,11 @@ function Workbench({
                   </div>
                   <div className="dap-field">
                     <span className="dap-field__label">{t('progress.title')}</span>
-                    <TodoList t={t} todos={project.lastRun?.todos ?? []} />
+                    <TodoList
+                      t={t}
+                      todos={project.lastRun?.todos ?? []}
+                      status={project.lastRun?.status ?? null}
+                    />
                   </div>
                   <div className="dap-field">
                     <span className="dap-field__label">{t('usage.title')}</span>
@@ -1169,11 +1172,21 @@ function RunBar({ t, project }: { t: Translate; project: Project }): ReactElemen
 }
 
 /** todo 列表：✓ / spinner / ○。 */
-export function TodoList({ t, todos }: { t: Translate; todos: readonly TodoItem[] }): ReactElement {
+export function TodoList({
+  t,
+  todos,
+  status = null,
+}: {
+  t: Translate
+  todos: readonly TodoItem[]
+  /** 这份 todo 归属的运行状态：给终态时先把残留的 in_progress 收敛掉再渲染。 */
+  status?: RunStatus | null
+}): ReactElement {
   if (todos.length === 0) return <p className="dap-hint">{t('progress.none')}</p>
+  const shown = status === null ? todos : settleTodos(todos, status)
   return (
     <div className="dap-todos">
-      {todos.map((todo) => (
+      {shown.map((todo) => (
         <div
           key={todo.content}
           className={

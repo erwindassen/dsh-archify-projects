@@ -3,7 +3,7 @@
 > 面向接手的 agent。读完这一份就能改代码、跑验证、装/卸插件、看懂当初为什么这么写。
 > 面向使用者的上手说明在 [README](../README.md)，设计取舍在 [DESIGN.md](./DESIGN.md)。
 
-最后更新：2026-11-09（v0.2.0：子代理会话 + 设置/模型选择，见 §13）
+最后更新：2026-11-11（v0.2.1：装机后两个展示问题的修复，见 §14）
 
 ---
 
@@ -22,7 +22,7 @@ DSH 的左栏插件「架构建模」：把一个代码库登记进台账，用*
 | 方面   | 状态                                                                                                                                                          |
 | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 功能   | 新增/删除项目、Git 探测（分支/commit/上游/脏）、首次生成、更新（切分支+快进+重跑）、重新生成单图、运行记录、深/浅色、非 Git 目录、iframe 内嵌预览、新窗口打开 |
-| 测试   | 206 个用例 / 15 个文件，`vitest` 全绿（约 1 s；`NODE_ENV` 不能是 production，见 §13.5）                                                                       |
+| 测试   | 213 个用例 / 15 个文件，`vitest` 全绿（约 1 s；`NODE_ENV` 不能是 production，见 §13.5）                                                                       |
 | 静态门 | `tsc`（两份 tsconfig）、`eslint`、`prettier --check`、`dependency-cruiser`、`artifact:check`（51.5 KB / 220 KB 预算）全绿                                     |
 | 真机   | 在 `127.0.0.1:3080` 的真实宿主里跑通过「Git 项目」与「非 Git 目录」两条路径，深浅色都验过；截图见 [`docs/verify/`](./verify)                                  |
 | 产物   | `~/.dsh/dsh-archify-projects/` 下 1 个项目（`dsh-word-learn`），两张图 ready                                                                                  |
@@ -188,6 +188,10 @@ pnpm verify        # build → artifact:check → typecheck/lint/format/deps →
 2. **时钟按本地时区格式化**（`clockText()`）。早期 `startedAt.slice(11,19)` 切的是 UTC，东八区显示成 05:51。
 3. **`isRunning()` 有 25 分钟兜底**（`isRunAlive` / `hasStaleRun`）。宿主被 kill 时 `running` 会留在台账里，
    没有兜底页面就永久「生成中」且按钮全禁用。
+4. **宿主没有全局 `box-sizing: border-box`**（`dsh-web-frontend` 里逐条写，没有 `*` 重置）。
+   自己写 `width:100% + padding` 的卡片会**比栅格列宽出 30px**：卡片本身压到隔壁、
+   里面那行「横线」跟着越界。`.dap-card` / `.dap-thumb` 都显式写了 `box-sizing: border-box`，别删；
+   图条用 `repeat(auto-fit, minmax(165px, 1fr))` 而不是 `1fr 1fr`（后者会被子项 min-content 撑开）。
 
 ---
 
@@ -509,3 +513,50 @@ agent.followup({ id, role: 'user', content, source: { kind: 'user' } })
 - **坑 2：组件测试的 fetch 桩是按「METHOD url」精确匹配的**，未命中就回
   `not-found`。`StudioPage` 现在挂载时会 `GET /settings`，所以设置拉取**必须静默
   失败**（`try/catch` 里什么都不做），否则每条老用例都会多出一条错误提示。
+
+---
+
+## 14. v0.2.1 修复（2026-11-11，装机后暴露的两个问题）
+
+用户在**本机 dsh（13080，装在 `~/.dsh/profiles/web`，npm 包 `0.2.0` 真装不是 link）**上
+报了两条，都在真宿主里复现并修掉：
+
+### 14.1 总览卡片的「横线太长」
+
+- 现象：项目卡片里「项目结构图」那一行比卡片还宽，压过右边框、破坏留白节奏。
+- 真因（CDP 实测 `getComputedStyle(.dap-card).boxSizing === 'content-box'`）：
+  宿主没有全局 border-box，`width:100% + padding:14px + border` 让卡片比栅格列宽 30px；
+  再叠上 `1fr 1fr` 的轨道被 min-content 撑开，`.dap-thumb--wide` 那行就顶出卡片。
+- 改法（`src/client/styles.ts` + `page.tsx`）：
+  `.dap-card` / `.dap-thumb` 显式 `box-sizing: border-box`；图条改
+  `repeat(auto-fit, minmax(165px, 1fr))`，删掉 `.dap-thumb--wide`（不再单独拉长结构图那一行）；
+  标题 `b` 加 `flex:1 1 auto; min-width:0`，长图名只截断不撑宽；底栏 `<span>` 也收 `min-width:0`。
+- 验证：CDP 量 `rowWidths = [185.5, 185.5]`、`maxOverflowRight = 0`（2 列 407px 卡）；
+  1500 宽 3 列模式同样 0 溢出。**改前端不用重启**，`dsh-client-hmr` 500 ms stat 轮询会自动重挂。
+
+### 14.2 最后一个 todo 永远「进行中」
+
+- 现象：运行 `succeeded` 了，台账里最后一条 todo 仍是 `in_progress`，页面一直转圈，
+  看起来像跑了几天没结束。
+- 真因：`todo_write` 的最后一次更新常常发生在 `whenIdle()` 之后/之间，3 秒轮询抓不到；
+  `finishRun()` 又原样把快照存了进去。
+- 改法：
+  1. `shared/types.ts` 新增 `settleTodos(todos, status)`：`succeeded` → 残留 `in_progress` 记成
+     `completed`；`failed` → 退回 `pending`；`running` → 原样。
+  2. `runner.ts`：`watchTodos` 返回 `{stop, flush}`，`follow()` 在 `whenIdle()` 之后先
+     `await watch.flush()` 再收尾；`finishRun()` 与 `finishQa()` 落盘前都过一遍 `settleTodos`。
+  3. 客户端 `TodoList` 收 `status`，渲染前同样过 `settleTodos` —— **老台账不用改也能显示对**。
+  4. 已把本机台账里 4 条历史 `in_progress` 收敛成 `completed`（备份 `projects.json.bak-20261111`）。
+- 测试：`tests/unit/shared.test.ts` 4 条、`tests/integration/runner.test.ts` 2 条（成功收敛 /
+  失败退回）、`tests/component/page.test.tsx` 2 条（卡片没有 `--wide`、结束后没有 `.dap-todo--now`）。
+  基线升到 **213 passed / 15 files**。
+
+> 验证路径（2026-11-11）：`dsh-dev` 容器里 `pnpm verify` 全绿 → `docker compose restart dsh`
+> → CDP 量到 `boxSizing=border-box`、三张卡 `maxOverflow=0`、残留 `in_progress` 显示成 ✓；
+> 再触发一次真实重画（agent 写入 6 步 todo），运行中 runbar 正常（`正在：加载 archify skill（0/6）`），
+> 结束后台账里没有 `in_progress`。
+>
+> 宿主侧（`lib/**`）改动要**重启 dsh** 才生效；客户端改动同步到
+> `~/.dsh/profiles/web/node_modules/dsh-archify-projects/dist/` 后走热更即可。
+> 本机这份安装是 npm 包而不是 `link:`，所以直接改仓库**不会**自动生效，必须重新
+> `pnpm build` 再把 `dist/` 与 `lib/` 抄进 profile 的 `node_modules`（或把依赖改回 `link:`）。

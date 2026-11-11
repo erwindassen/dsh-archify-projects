@@ -368,3 +368,27 @@ export function activeTodo(run: RunRecord | null): TodoItem | null {
   if (run === null) return null
   return run.todos.find((todo) => todo.status === 'in_progress') ?? null
 }
+
+/**
+ * 把 todo 收敛到「已经没人在跑」的状态。
+ *
+ * agent 经常在最后一步（回报产物标记）没来得及再写一次 `todo_write` 就被判 idle，
+ * 台账里于是留下一条永远 `in_progress` 的记录：页面会一直转圈、卡片一直显示
+ * 「正在：回报产物标记与统计」，用户以为跑了几天还没结束。
+ *
+ * 规则：运行结束就不再有任何「正在进行」。
+ *   - `succeeded` → 剩下的 in_progress 记成 completed（整轮跑完了，最后一步确实发生）；
+ *   - `failed`    → 退回 pending（做到哪一步不知道，别假装完成）；
+ *   - `running`   → 原样返回（还在跑，本来就有当前步骤）。
+ */
+export function settleTodos(todos: readonly TodoItem[], status: RunStatus): readonly TodoItem[] {
+  if (status === 'running') return todos
+  const next: TodoItem['status'] = status === 'succeeded' ? 'completed' : 'pending'
+  let changed = false
+  const settled = todos.map((todo) => {
+    if (todo.status !== 'in_progress') return todo
+    changed = true
+    return { ...todo, status: next }
+  })
+  return changed ? settled : todos
+}

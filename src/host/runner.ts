@@ -25,6 +25,7 @@ import {
   allDiagrams,
   DIAGRAM_KINDS,
   findDiagram,
+  settleTodos,
   usageTotalOf,
   type Concept,
   type DiagramKind,
@@ -484,6 +485,8 @@ export class Runner {
           at: now,
           answer: outcome.answer,
           status: outcome.status,
+          // 关会话之后不会再有「正在进行」：问答也一样收敛（done→完成，failed→退回）。
+          todos: settleTodos(entry.todos, outcome.status === 'done' ? 'succeeded' : 'failed'),
           usage: outcome.usage,
         }
         return saved
@@ -509,13 +512,19 @@ export class Runner {
    *
    * 页面靠这份快照显示「正在：<当前步骤>」；读不到（宿主没挂 projection 或 agent
    * 还没写 todo）就什么都不做，不制造假进度。
+   *
+   * 轮询之外还要一个 `flush()`：agent 判 idle 时最后一份 todo 往往比上一次轮询新，
+   * 收尾前补读一次才不会把「最后一步」记成半截状态。
    */
-  private watchTodos(projectId: string, runId: string, agent: AgentLike): () => void {
+  private watchTodos(
+    projectId: string,
+    runId: string,
+    agent: AgentLike,
+  ): { stop: () => void; flush: () => Promise<void> } {
     const { ctx, store } = this.deps
     let stopped = false
     let last = ''
     const tick = async (): Promise<void> => {
-      if (stopped) return
       const todos = todosOf(ctx, agent)
       if (todos === null) return
       const signature = todos.map((todo) => `${todo.status}:${todo.content}`).join('|')
@@ -526,10 +535,19 @@ export class Runner {
         .catch(() => undefined)
     }
     void tick()
-    const timer = setInterval(() => void tick(), 3000)
-    return () => {
-      stopped = true
-      clearInterval(timer)
+    const timer = setInterval(() => {
+      if (stopped) return
+      void tick()
+    }, 3000)
+    return {
+      stop: () => {
+        stopped = true
+        clearInterval(timer)
+      },
+      // 收尾补读一次（不受 stopped 影响：先 flush 再 stop）。
+      flush: async () => {
+        await tick()
+      },
     }
   }
 
@@ -545,10 +563,15 @@ export class Runner {
         return
       }
       const agent = agentOf(ctx, sessionId)
-      const stop = agent === undefined ? () => {} : this.watchTodos(projectId, runId, agent)
+      const watch =
+        agent === undefined
+          ? { stop: () => {}, flush: async (): Promise<void> => {} }
+          : this.watchTodos(projectId, runId, agent)
       try {
         if (agent === undefined) throw new RunnerUnavailable('会话已不在运行中，无法等待结果')
         await withTimeout(agent.whenIdle(), config.runTimeoutMs)
+        // 补读最后一份 todo，`finishRun` 才好把它收敛成终态。
+        await watch.flush()
         const text = readFinalText(agent)
         const markers = parseArtifactMarkers(text)
         const found = await this.collectArtifacts(projectId, markers, diagramIds)
@@ -562,7 +585,7 @@ export class Runner {
           usageOf(ctx, agent),
         )
       } finally {
-        stop()
+        watch.stop()
       }
     }
     return run()
@@ -734,7 +757,14 @@ function finishRun(
       todos: [],
       usage: null,
     }
-  return { ...base, status: outcome.status, finishedAt: now, error: outcome.error }
+  return {
+    ...base,
+    status: outcome.status,
+    finishedAt: now,
+    error: outcome.error,
+    // 运行一结束就收敛 todo：别让最后一步以 in_progress 留在台账里冒充「正在做」。
+    todos: settleTodos(base.todos, outcome.status),
+  }
 }
 
 function stampOf(date: Date): string {
