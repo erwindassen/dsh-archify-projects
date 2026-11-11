@@ -560,3 +560,60 @@ agent.followup({ id, role: 'user', content, source: { kind: 'user' } })
 > `~/.dsh/profiles/web/node_modules/dsh-archify-projects/dist/` 后走热更即可。
 > 本机这份安装是 npm 包而不是 `link:`，所以直接改仓库**不会**自动生效，必须重新
 > `pnpm build` 再把 `dist/` 与 `lib/` 抄进 profile 的 `node_modules`（或把依赖改回 `link:`）。
+
+---
+
+## 15. v0.2.2 修复（2026-11-11，子代理会话没有模型）
+
+### 15.1 现象
+
+本机宿主（npm 包 `0.2.0`）上新建项目 / 重画，运行「刚开始就结束」：台账写
+`没有找到这次运行的产物文件`、`部分图谱没有产出`，产物目录是空的，连续四次全一样。
+
+### 15.2 真因
+
+`agents.create`（子代理会话那条路）**不会**去读宿主默认模型。DSH 里注入
+`agentOptions` 的只有 `sessionController.createAgent()`（它用 `agentOptions()` getter
+读 `agentDefaultModel.currentSelection()`）。v0.2.0 把分析改成子代理会话后，
+`model === null` 时干脆不传 `agentOptions` —— 建出来的 agent 一个 provider/model
+都没有，`dsh-agent-loop` 在 `preStep` 里 `this.model.current()` 拿到 `undefined` 就抛：
+
+```
+agent "session-…" has no provider/model:
+set AgentOptions.provider and AgentOptions.model or record a model selection
+```
+
+`kick()` 把这个异常吞进 `turn/end: {reason: {kind: 'error'}}`，外面只剩「没有产物」。
+11-09 那两张图能出，是因为当时还在 `sessionController` 那条老路上。
+
+### 15.3 改法
+
+1. `runner.ts` 新增 `resolveModel(ctx, config)`，三级取源：
+   **插件设置 → `ctx.agentDefaultModel.currentSelection()` → `modelCatalog().default`**。
+   第二级就是「DSH 里配的模型」，`HostContext` 里补了 `AgentDefaultModelLike`。
+2. 仍然为 `null`（老宿主没有这两样）时**不建子代理会话**，退回 `sessionController`
+   —— 那条路自带注入，功能不消失，代价是会话会出现在侧栏。
+3. `agentOptions` 从「可能为空」变成必然非空；`index.ts` 的 `VERSION` 常量同步到
+   `package.json`（0.2.1 发版时漏改，`/health` 一直报 0.2.0），并加
+   `tests/unit/version.test.ts` 守着。
+
+### 15.4 验证（dsh-dev 容器，2026-11-11）
+
+删掉容器里的 `<dataDir>/settings.json`（逼出「跟随默认」这条路）→ 重画一张图：
+
+| 检查点                  | 结果                                                                              |
+| ----------------------- | --------------------------------------------------------------------------------- |
+| 会话头                  | `origin: subagent`、`delegationDepth: 1`、`agentPreset: archify-projects`         |
+| `request/header.config` | `{provider: "zifei", model: "deepseek-v4.1-flash", maxTokens: 64000}` —— 继承成功 |
+| 首轮                    | 无 `no provider/model`；连续 26 步、42 次工具调用                                 |
+| 兜底                    | 单元/集成用例覆盖「没有默认模型时退回普通会话」                                   |
+| 质量门                  | **215 passed / 15 files**（`NODE_ENV=test pnpm verify`，容器内）                  |
+
+> 同日观察到另一类失败：该会话第 27 步的长推理请求长时间无响应，最终撞上
+> `等待 agent 结束超时（1200000 ms）`。与本节无关（模型路由已正常），属网关侧慢。
+
+### 15.5 别再犯
+
+- **任何 `agents.create` 都必须自己带 `provider/model`**：宿主不会替你补，
+  缺了的表现是「运行秒结束 + 没有产物」，而不是一条好看的错误。
+- 插件设置里的 `model` 是**覆盖**，不是默认值来源；默认值只有 `agentDefaultModel`。

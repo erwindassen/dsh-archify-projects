@@ -41,7 +41,12 @@ interface FakeAgent {
 
 /** 造一个「能自己建子代理会话」的宿主。 */
 function makeSubagentCtx(
-  options: { createThrows?: boolean; withSessionController?: boolean } = {},
+  options: {
+    createThrows?: boolean
+    withSessionController?: boolean
+    /** DSH 里配的默认模型；null = 宿主没有这个服务。 */
+    defaultModel?: { provider: string; model: string } | null
+  } = {},
 ): {
   ctx: never
   agent: FakeAgent
@@ -64,8 +69,15 @@ function makeSubagentCtx(
     return { agent: { ...agent, id: request.sessionId }, dispose: async () => {} }
   })
   const sessionCreate = vi.fn(async () => ({ sessionId: 'session_plain' }))
+  const defaultModel =
+    options.defaultModel === undefined
+      ? { provider: 'zifei', model: 'deepseek-v4.1-flash' }
+      : options.defaultModel
   const ctx = {
     logger: { info: () => {}, warn: () => {} },
+    ...(defaultModel === null
+      ? {}
+      : { agentDefaultModel: { currentSelection: () => ({ ...defaultModel }) } }),
     agents: {
       create,
       get: vi.fn((id: string) => (id === 'session_plain' ? { ...agent, id } : undefined)),
@@ -165,16 +177,46 @@ describe('子代理会话', () => {
     expect(sessionCreate).toHaveBeenCalledTimes(1)
   })
 
-  test('没选模型时不带 agentOptions（跟随宿主默认）', async () => {
+  test('没选模型时用 DSH 里配的默认模型（子代理不经过 sessionController 的注入）', async () => {
     const project = await seedProject()
-    const { ctx, create } = makeSubagentCtx()
+    const { ctx, create } = makeSubagentCtx({
+      defaultModel: { provider: 'zifei', model: 'deepseek-v4.1-flash' },
+    })
     const runner = new Runner({ ctx, store, config: config(), skillDir: async () => null })
 
     await runner.start(project, 'create', ['structure'])
     await runner.whenSettled('prj_1')
 
     const request = create.mock.calls[0]?.[0] as { agentOptions?: unknown }
-    expect(request.agentOptions).toBeUndefined()
+    expect(request.agentOptions).toEqual({ provider: 'zifei', model: 'deepseek-v4.1-flash' })
+  })
+
+  test('插件设置优先于 DSH 默认模型', async () => {
+    const project = await seedProject()
+    await writeSettings(config(), { model: { provider: 'self', model: 'deepseek-v4.1-flash' } })
+    const { ctx, create } = makeSubagentCtx({
+      defaultModel: { provider: 'zifei', model: 'deepseek-v4.1-flash' },
+    })
+    const runner = new Runner({ ctx, store, config: config(), skillDir: async () => null })
+
+    await runner.start(project, 'create', ['structure'])
+    await runner.whenSettled('prj_1')
+
+    const request = create.mock.calls[0]?.[0] as { agentOptions?: unknown }
+    expect(request.agentOptions).toEqual({ provider: 'self', model: 'deepseek-v4.1-flash' })
+  })
+
+  test('宿主没有默认模型时不建子代理会话，退回普通会话（它有注入）', async () => {
+    const project = await seedProject()
+    const { ctx, create, sessionCreate } = makeSubagentCtx({ defaultModel: null })
+    const runner = new Runner({ ctx, store, config: config(), skillDir: async () => null })
+
+    const started = await runner.start(project, 'create', ['structure'])
+    await runner.whenSettled('prj_1')
+
+    expect(create).not.toHaveBeenCalled()
+    expect(started.sessionId).toBe('session_plain')
+    expect(sessionCreate).toHaveBeenCalledTimes(1)
   })
 
   test('宿主没有 agentPresets 时不走子代理这条路', async () => {

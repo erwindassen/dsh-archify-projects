@@ -134,7 +134,8 @@ pnpm add link:/absolute/path/to/dsh-archify-projects   # 或在 package.json 里
 `agentPresets.mount`），所以：
 
 - DSH 左侧会话列表按 origin 过滤子代理会话 —— 分析不会往你的对话列表里塞新条目；
-- 会话的模型走 `agentOptions`，**只影响这一次运行**，不会改掉 DSH 里你的默认模型；
+- 会话的模型走 `agentOptions`：设置里没选就用 **DSH 里配的默认模型**
+  （`agentDefaultModel`），**只影响这一次运行**，不会改掉 DSH 里你的默认模型；
 - 宿主版本没有这条路（缺 `agents.create` / `agentPresets`）时安静退回普通会话，
   工具白名单、preset、产物回收都不变。
 

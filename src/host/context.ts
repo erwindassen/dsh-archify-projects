@@ -219,6 +219,19 @@ export interface AgentsLike {
 }
 
 /**
+ * `ctx.agentDefaultModel`（`@deepseek-ai/dsh-agent-default-model`）。
+ *
+ * 这就是「DSH 里配的那个默认模型」。普通会话由 `sessionController` 在建会话时
+ * 用 `currentSelection()` 注入 `agentOptions`；**子代理会话不经过那一层**，
+ * 所以本插件必须自己读它 —— 否则 `agents.create` 建出来的会话一个
+ * provider/model 都没有，第一轮 preStep 就被 agent-loop 判死
+ * （`has no provider/model: … or record a model selection`）。
+ */
+export interface AgentDefaultModelLike {
+  currentSelection(): { provider: string; model: string; reasoningEffort?: string }
+}
+
+/**
  * `ctx.agentPresets`（`@deepseek-ai/dsh-agent-preset-registry`）。
  *
  * 只有两个成员：`resolve()` 把 preset id 校验成当前可用的 id，`mount()` 在
@@ -246,6 +259,8 @@ export interface HostContext {
   sessionProjections?: SessionProjectionsLike
   sessionController?: SessionControllerLike
   agents?: AgentsLike
+  /** DSH 设置里配的默认模型（子代理会话要靠它继承模型）。 */
+  agentDefaultModel?: AgentDefaultModelLike
   skills?: SkillsLike
   tools?: ToolsLike
   sessions?: unknown

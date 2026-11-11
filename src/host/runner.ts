@@ -41,6 +41,7 @@ import {
 import { projectDir, workspaceRoot, type ResolvedConfig } from './config.js'
 import {
   serviceOf,
+  type AgentDefaultModelLike,
   type AgentLike,
   type AgentModelLike,
   type AgentPresetsLike,
@@ -50,6 +51,7 @@ import {
   type SessionProjectionsLike,
 } from './context.js'
 import type { ModelRef } from '../shared/protocol.js'
+import { readModelCatalog, readModelRef } from './models.js'
 import {
   allowedToolNames,
   readonlyToolNames,
@@ -301,7 +303,7 @@ export class Runner {
     const { ctx, config } = this.deps
     const allow = mode === 'ask' ? readonlyToolNames() : allowedToolNames()
     const presetId = mode === 'ask' ? config.askPresetId : config.presetId
-    const model = await selectedModel(config)
+    const model = await resolveModel(ctx, config)
 
     const subagent = await this.openSubagentSession(workspaceDir, presetId, model, allow, mode)
     if (subagent !== null) {
@@ -360,8 +362,14 @@ export class Runner {
   /**
    * 建一个子代理会话（`origin: 'subagent'`）。
    *
-   * 返回 null 表示「这条路走不了」（宿主缺服务 / 建会话失败），调用方退回普通会话。
-   * 失败只记一条 warn：子代理是**增强**，不是功能前提。
+   * 返回 null 表示「这条路走不了」（宿主缺服务 / 没有可用模型 / 建会话失败），
+   * 调用方退回普通会话。失败只记一条 warn：子代理是**增强**，不是功能前提。
+   *
+   * `model === null` 时必须放弃这条路：`agents.create` 不会去读
+   * `agentDefaultModel`，建出来的会话第一步就抛
+   * `has no provider/model`，而且异常被 agent-loop 吞进 `turn/end`，
+   * 外面只能看到「没有产物」。普通会话那条路由 `sessionController` 注入
+   * 默认模型，所以退回它至少能跑。
    */
   private async openSubagentSession(
     workspaceDir: string,
@@ -374,6 +382,10 @@ export class Runner {
     const agents = serviceOf<AgentsLike>(ctx, 'agents')
     const presets = serviceOf<AgentPresetsLike>(ctx, 'agentPresets')
     if (agents?.create === undefined || presets === undefined) return null
+    if (model === null) {
+      this.warn('没有可用模型（插件设置与 DSH 默认都读不到）：退回普通会话')
+      return null
+    }
 
     try {
       const preset = await presets.resolve(presetId)
@@ -388,7 +400,7 @@ export class Runner {
           // 递归预算：本插件的分析不会再往下派子代理，固定 1 层
           delegationDepth: 1,
         },
-        ...(model === null ? {} : { agentOptions: { ...model } }),
+        agentOptions: { ...model },
         setup: async (agentCtx) => {
           await presets.mount(agentCtx, preset.id)
         },
@@ -1198,7 +1210,7 @@ export function canCreateSubagentSessions(ctx: HostContext): boolean {
   return typeof presets.mount === 'function' && typeof presets.resolve === 'function'
 }
 
-/** 读设置里选的模型；读不到（文件缺失/损坏）就是「跟随宿主默认」。 */
+/** 读设置里选的模型；读不到（文件缺失/损坏）就是「没选」。 */
 async function selectedModel(config: ResolvedConfig): Promise<ModelRef | null> {
   try {
     const settings = await readSettings(config)
@@ -1206,6 +1218,39 @@ async function selectedModel(config: ResolvedConfig): Promise<ModelRef | null> {
   } catch {
     return null
   }
+}
+
+/**
+ * 这次分析用哪个模型。**顺序即优先级**：
+ *
+ *   1. 插件设置里显式选的（用户在设置弹窗挑过）；
+ *   2. DSH 里配的默认模型（`ctx.agentDefaultModel.currentSelection()`）——
+ *      这是「跟随宿主默认」的真正实现：子代理会话不经过 `sessionController`
+ *      的注入，必须自己补上，否则会话第一轮就因为没有 provider/model 被判死；
+ *   3. 宿主模型目录的 `default` 字段（老宿主没有 agentDefaultModel 时的退路）；
+ *   4. 都没有 → `null`，调用方退回 `sessionController`（它自己会注入默认模型）。
+ */
+async function resolveModel(ctx: HostContext, config: ResolvedConfig): Promise<ModelRef | null> {
+  const chosen = await selectedModel(config)
+  if (chosen !== null) return chosen
+
+  const defaults = serviceOf<AgentDefaultModelLike>(ctx, 'agentDefaultModel')
+  if (defaults !== undefined && typeof defaults.currentSelection === 'function') {
+    try {
+      const ref = readModelRef(defaults.currentSelection())
+      if (ref !== null) return ref
+    } catch {
+      // 宿主版本没有这个面：继续往下退
+    }
+  }
+
+  try {
+    const catalog = await readModelCatalog(ctx)
+    if (catalog.fallback !== null) return catalog.fallback
+  } catch {
+    // 目录列不出来不影响：退到第 4 步
+  }
+  return null
 }
 
 /**
