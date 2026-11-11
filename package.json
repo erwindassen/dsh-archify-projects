@@ -1,6 +1,6 @@
 {
   "name": "dsh-archify-projects",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "DSH 架构建模工作台：项目台账、Git 感知、复用 DSH agent 调 archify 产出项目结构图与领域图",
   "type": "module",
   "main": "lib/host/index.js",

@@ -22,7 +22,7 @@ import { ProjectStore } from './store.js'
 import { ensureWorkspace } from './workspace.js'
 
 /** 与 package.json 的 version 保持一致（有单测守着）。 */
-export const VERSION = '0.2.1'
+export const VERSION = '0.2.2'
 
 /** 插件入口。 */
 export function apply(ctx: HostContext, rawConfig?: unknown): void {
