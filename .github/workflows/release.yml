@@ -117,7 +117,11 @@ jobs:
         run: |
           set -euo pipefail
           echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" > "$RUNNER_TEMP/.npmrc"
-          npm publish --access public --userconfig "$RUNNER_TEMP/.npmrc"
+          # 发**同一个 tgz**（就是 Release 那两个资产），别让 npm 在现场重打包：
+          # `pnpm pack` 会重写 package.json（去掉 scripts 等），现场 `npm publish`
+          # 出来的字节与资产不同，两处 sha256 永远对不上，核对时白折腾。
+          npm publish "$RUNNER_TEMP/dsh-archify-projects-${{ steps.meta.outputs.version }}.tgz" \
+            --access public --userconfig "$RUNNER_TEMP/.npmrc"
 
       - name: Summary
         run: |

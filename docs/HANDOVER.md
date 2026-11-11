@@ -617,3 +617,15 @@ set AgentOptions.provider and AgentOptions.model or record a model selection
 - **任何 `agents.create` 都必须自己带 `provider/model`**：宿主不会替你补，
   缺了的表现是「运行秒结束 + 没有产物」，而不是一条好看的错误。
 - 插件设置里的 `model` 是**覆盖**，不是默认值来源；默认值只有 `agentDefaultModel`。
+
+### 15.6 发布（v0.2.2）
+
+`git push origin main --tags`（tag `v0.2.2`）→ release workflow 45 s 跑完：verify →
+pack → Release 资产（`dsh-archify-projects-0.2.2.tgz` + 稳定别名 + `SHA256SUMS.txt`）→
+`npm publish`。核对结果：
+
+- npm 上 `0.2.2` 在发布后约 **2 分钟**才出现在 packument 里（不是失败，别急着重发）；
+- `releases/latest/download/dsh-archify-projects.tgz` → 200，1 989 382 B；
+- 两处 tgz **内容**一致，但**字节**不一致：`pnpm pack` 会重写 `package.json`（去掉 `scripts`），
+  而旧 workflow 的 `npm publish` 是现场重打包。已把 publish 步骤改成直接发
+  `$RUNNER_TEMP/dsh-archify-projects-<version>.tgz`，从下一版起两处 sha256 应当相同。
