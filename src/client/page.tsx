@@ -678,6 +678,19 @@ function Workbench({
   const parent = diagram?.parentId != null ? findDiagram(project, diagram.parentId) : undefined
   const thread = project.qa.filter((entry) => entry.diagramId === diagram?.id)
 
+  // 铺满：把成品图谱放大到工作台高度（横向可滚动）。iframe 同源，直接注入样式，
+  // 不改成品 HTML，也不依赖查看器的 present 模式（它按宽高较小边缩放，放大有限）。
+  const [fill, setFill] = useState(false)
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const fillRef = useRef(fill)
+  fillRef.current = fill
+  const toggleFill = (): void => {
+    const next = !fillRef.current
+    fillRef.current = next
+    setFill(next)
+    if (iframeRef.current !== null) applyArtifactFill(iframeRef.current, next)
+  }
+
   const tree = project.git.tree
   return (
     <>
@@ -718,6 +731,14 @@ function Workbench({
             <div className="dap-viewer__tools">
               {diagram?.htmlPath != null ? (
                 <>
+                  <button
+                    className="dap-btn dap-btn--ghost dap-btn--sm"
+                    onClick={toggleFill}
+                    aria-pressed={fill}
+                    title={t('action.fillHint')}
+                  >
+                    {t('action.fill')}
+                  </button>
                   <a
                     className="dap-btn dap-btn--ghost dap-btn--sm"
                     href={ROUTES.artifact(diagram.htmlPath)}
@@ -755,11 +776,16 @@ function Workbench({
                   <span>{diagram.title}</span>
                 </div>
                 <iframe
+                  ref={iframeRef}
                   className="dap-iframe"
                   title={diagram.title}
                   src={ROUTES.artifact(diagram.htmlPath)}
                   sandbox="allow-scripts allow-same-origin"
-                  onLoad={(event) => hideArtifactHeader(event.currentTarget)}
+                  onLoad={(event) => {
+                    iframeRef.current = event.currentTarget
+                    hideArtifactHeader(event.currentTarget)
+                    applyArtifactFill(event.currentTarget, fillRef.current)
+                  }}
                 />
               </div>
             ) : (
@@ -1067,6 +1093,57 @@ export function ThumbStrip({
  * 只在 iframe 里注入，点「新窗口」单独打开时仍是成品原样（那里没有外层标题）。
  * 同源才改得动；被沙箱或跨域挡住就静默跳过，不影响看图。
  */
+const FILL_STYLE = `
+html[data-dap-fill="true"] body { overflow: hidden; }
+html[data-dap-fill="true"] .cards,
+html[data-dap-fill="true"] .diagram-guide { display: none !important; }
+html[data-dap-fill="true"] .container { max-width: none; margin: 0; padding: 0; width: 100%; }
+html[data-dap-fill="true"] .diagram-container {
+  height: 100dvh;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+html[data-dap-fill="true"] .diagram-container > svg {
+  height: calc(100dvh - 16px) !important;
+  width: auto !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  flex: none;
+}
+`
+
+/**
+ * 铺满模式：按工作台高度放大图谱，宽度不够时横向滚动。
+ * 只改 iframe 文档里的一个 <style>，成品 HTML 不动；关掉即复原。
+ */
+export function applyArtifactFill(frame: HTMLIFrameElement | null, on: boolean): void {
+  try {
+    const doc = frame?.contentDocument
+    if (doc === null || doc === undefined) return
+    let style = doc.head.querySelector<HTMLStyleElement>('style[data-embedded="fill"]')
+    if (on) {
+      if (style === null) {
+        style = doc.createElement('style')
+        style.dataset.embedded = 'fill'
+        style.textContent = FILL_STYLE
+        doc.head.appendChild(style)
+      }
+      doc.documentElement.setAttribute('data-dap-fill', 'true')
+    } else {
+      style?.remove()
+      doc.documentElement.removeAttribute('data-dap-fill')
+    }
+  } catch {
+    // 跨域或沙箱拦截：保留成品原样
+  }
+}
+
 export function hideArtifactHeader(frame: HTMLIFrameElement): void {
   try {
     const doc = frame.contentDocument

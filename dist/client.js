@@ -1264,6 +1264,16 @@ function Workbench({ t, project, diagram, tab, busy, question, pricing, ago, onT
 	const children = diagram === void 0 ? [] : custom.filter((item) => item.parentId === diagram.id);
 	const parent = diagram?.parentId != null ? findDiagram(project, diagram.parentId) : void 0;
 	const thread = project.qa.filter((entry) => entry.diagramId === diagram?.id);
+	const [fill, setFill] = (0, react.useState)(false);
+	const iframeRef = (0, react.useRef)(null);
+	const fillRef = (0, react.useRef)(fill);
+	fillRef.current = fill;
+	const toggleFill = () => {
+		const next = !fillRef.current;
+		fillRef.current = next;
+		setFill(next);
+		if (iframeRef.current !== null) applyArtifactFill(iframeRef.current, next);
+	};
 	const tree = project.git.tree;
 	return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
 		/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -1311,19 +1321,29 @@ function Workbench({ t, project, diagram, tab, busy, question, pricing, ago, onT
 							children: [diagram?.title ?? t("status.none"), parent !== void 0 ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", { children: ["/ ", parent.title] }) : null]
 						}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 							className: "dap-viewer__tools",
-							children: [diagram?.htmlPath != null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
-								className: "dap-btn dap-btn--ghost dap-btn--sm",
-								href: ROUTES.artifact(diagram.htmlPath),
-								target: "_blank",
-								rel: "noreferrer",
-								children: t("action.openTab")
-							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
-								className: "dap-btn dap-btn--ghost dap-btn--sm",
-								href: ROUTES.artifact(diagram.htmlPath),
-								target: "_blank",
-								rel: "noreferrer",
-								children: t("action.fullscreen")
-							})] }) : null, /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+							children: [diagram?.htmlPath != null ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+									className: "dap-btn dap-btn--ghost dap-btn--sm",
+									onClick: toggleFill,
+									"aria-pressed": fill,
+									title: t("action.fillHint"),
+									children: t("action.fill")
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
+									className: "dap-btn dap-btn--ghost dap-btn--sm",
+									href: ROUTES.artifact(diagram.htmlPath),
+									target: "_blank",
+									rel: "noreferrer",
+									children: t("action.openTab")
+								}),
+								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
+									className: "dap-btn dap-btn--ghost dap-btn--sm",
+									href: ROUTES.artifact(diagram.htmlPath),
+									target: "_blank",
+									rel: "noreferrer",
+									children: t("action.fullscreen")
+								})
+							] }) : null, /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
 								className: "dap-btn dap-btn--ghost dap-btn--sm",
 								onClick: onRegenerate,
 								disabled: busy !== null,
@@ -1343,11 +1363,16 @@ function Workbench({ t, project, diagram, tab, busy, question, pricing, ago, onT
 									ago(diagram.generatedAt)
 								] }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: diagram.title })]
 							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("iframe", {
+								ref: iframeRef,
 								className: "dap-iframe",
 								title: diagram.title,
 								src: ROUTES.artifact(diagram.htmlPath),
 								sandbox: "allow-scripts allow-same-origin",
-								onLoad: (event) => hideArtifactHeader(event.currentTarget)
+								onLoad: (event) => {
+									iframeRef.current = event.currentTarget;
+									hideArtifactHeader(event.currentTarget);
+									applyArtifactFill(event.currentTarget, fillRef.current);
+								}
 							})]
 						}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 							className: "dap-frame",
@@ -1645,6 +1670,53 @@ function ThumbStrip({ t, project, selectedId, onSelect, onNewDiagram }) {
 * 只在 iframe 里注入，点「新窗口」单独打开时仍是成品原样（那里没有外层标题）。
 * 同源才改得动；被沙箱或跨域挡住就静默跳过，不影响看图。
 */
+const FILL_STYLE = `
+html[data-dap-fill="true"] body { overflow: hidden; }
+html[data-dap-fill="true"] .cards,
+html[data-dap-fill="true"] .diagram-guide { display: none !important; }
+html[data-dap-fill="true"] .container { max-width: none; margin: 0; padding: 0; width: 100%; }
+html[data-dap-fill="true"] .diagram-container {
+  height: 100dvh;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: auto;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+html[data-dap-fill="true"] .diagram-container > svg {
+  height: calc(100dvh - 16px) !important;
+  width: auto !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  flex: none;
+}
+`;
+/**
+* 铺满模式：按工作台高度放大图谱，宽度不够时横向滚动。
+* 只改 iframe 文档里的一个 <style>，成品 HTML 不动；关掉即复原。
+*/
+function applyArtifactFill(frame, on) {
+	try {
+		const doc = frame?.contentDocument;
+		if (doc === null || doc === void 0) return;
+		let style = doc.head.querySelector("style[data-embedded=\"fill\"]");
+		if (on) {
+			if (style === null) {
+				style = doc.createElement("style");
+				style.dataset.embedded = "fill";
+				style.textContent = FILL_STYLE;
+				doc.head.appendChild(style);
+			}
+			doc.documentElement.setAttribute("data-dap-fill", "true");
+		} else {
+			style?.remove();
+			doc.documentElement.removeAttribute("data-dap-fill");
+		}
+	} catch {}
+}
 function hideArtifactHeader(frame) {
 	try {
 		const doc = frame.contentDocument;
@@ -1857,6 +1929,8 @@ const zh = {
 	"action.openTab": "新窗口",
 	"action.fullscreen": "全屏",
 	"action.regenerate": "重画",
+	"action.fill": "铺满",
+	"action.fillHint": "按窗口高度放大图谱，宽度不够时横向滚动；再点一次复原",
 	"action.delete": "删除",
 	"action.openSession": "查看会话",
 	"action.cancel": "取消",
@@ -2032,6 +2106,8 @@ const en = {
 	"action.openTab": "Open",
 	"action.fullscreen": "Fullscreen",
 	"action.regenerate": "Redraw",
+	"action.fill": "Fill",
+	"action.fillHint": "Scale the diagram to the window height, panning sideways when needed; click again to reset",
 	"action.delete": "Delete",
 	"action.openSession": "Open session",
 	"action.cancel": "Cancel",
