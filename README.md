@@ -1,5 +1,11 @@
 # dsh-archify-projects
 
+> **本仓库是 fork**：[`erwindassen/dsh-archify-projects`](https://github.com/erwindassen/dsh-archify-projects)。
+> 相对上游只多了一件事：配置项 `outputLanguage`，让图谱正文（节点、连线、卡片、标题）用指定语言输出，见下面「语言」一节。
+>
+> 另外，为了让 `dsh plugin add github:erwindassen/dsh-archify-projects` 不必在本机跑构建就能用，
+> `lib/` 与 `dist/` 以**构建产物**的形式提交在本仓库里（上游 `.gitignore` 掉了它们）。改动源码后照常 `pnpm verify` 再提交。
+
 给 DSH 加一个「代码库图谱工作台」：登记本地仓库 → 自动识别 Git 分支与提交点 →
 由受限的 DSH agent 调 [archify](https://github.com/tt-a1i/archify) 产出**项目结构图**与**领域图** →
 以后每次打开都能切回记录的分支、更新到最新提交再重画。
