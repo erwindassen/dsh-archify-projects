@@ -31,6 +31,7 @@ const zh: Record<string, string> = {
   'action.fullscreen': '全屏',
   'action.regenerate': '重画',
   'action.fill': '铺满',
+  'action.fillReset': '复原',
   'action.fillHint': '按窗口高度放大图谱，宽度不够时横向滚动；再点一次复原',
   'action.delete': '删除',
   'action.openSession': '查看会话',
@@ -230,6 +231,7 @@ const en: Record<string, string> = {
   'action.fullscreen': 'Fullscreen',
   'action.regenerate': 'Redraw',
   'action.fill': 'Fill',
+  'action.fillReset': 'Reset',
   'action.fillHint':
     'Scale the diagram to the window height, panning sideways when needed; click again to reset',
   'action.delete': 'Delete',

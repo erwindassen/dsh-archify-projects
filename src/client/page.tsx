@@ -737,7 +737,7 @@ function Workbench({
                     aria-pressed={fill}
                     title={t('action.fillHint')}
                   >
-                    {t('action.fill')}
+                    {fill ? t('action.fillReset') : t('action.fill')}
                   </button>
                   <a
                     className="dap-btn dap-btn--ghost dap-btn--sm"
@@ -1138,6 +1138,16 @@ export function applyArtifactFill(frame: HTMLIFrameElement | null, on: boolean):
     } else {
       style?.remove()
       doc.documentElement.removeAttribute('data-dap-fill')
+      // 成品查看器把导航栏避让高度写成内联变量；放大后它会算出上千 px 的 padding。
+      // 复原时清掉这些内联值并让它按正常尺寸重算，否则页面会被撑成无限长。
+      const container = doc.querySelector<HTMLElement>('.diagram-container')
+      if (container !== null) {
+        container.style.removeProperty('--archify-nav-reserve')
+        container.style.removeProperty('--archify-dock-lift')
+        container.removeAttribute('data-nav-stage-rail')
+      }
+      doc.documentElement.removeAttribute('data-nav-stage-rail')
+      doc.defaultView?.dispatchEvent(new Event('resize'))
     }
   } catch {
     // 跨域或沙箱拦截：保留成品原样

@@ -1327,7 +1327,7 @@ function Workbench({ t, project, diagram, tab, busy, question, pricing, ago, onT
 									onClick: toggleFill,
 									"aria-pressed": fill,
 									title: t("action.fillHint"),
-									children: t("action.fill")
+									children: fill ? t("action.fillReset") : t("action.fill")
 								}),
 								/* @__PURE__ */ (0, react_jsx_runtime.jsx)("a", {
 									className: "dap-btn dap-btn--ghost dap-btn--sm",
@@ -1714,6 +1714,14 @@ function applyArtifactFill(frame, on) {
 		} else {
 			style?.remove();
 			doc.documentElement.removeAttribute("data-dap-fill");
+			const container = doc.querySelector(".diagram-container");
+			if (container !== null) {
+				container.style.removeProperty("--archify-nav-reserve");
+				container.style.removeProperty("--archify-dock-lift");
+				container.removeAttribute("data-nav-stage-rail");
+			}
+			doc.documentElement.removeAttribute("data-nav-stage-rail");
+			doc.defaultView?.dispatchEvent(new Event("resize"));
 		}
 	} catch {}
 }
@@ -1930,6 +1938,7 @@ const zh = {
 	"action.fullscreen": "全屏",
 	"action.regenerate": "重画",
 	"action.fill": "铺满",
+	"action.fillReset": "复原",
 	"action.fillHint": "按窗口高度放大图谱，宽度不够时横向滚动；再点一次复原",
 	"action.delete": "删除",
 	"action.openSession": "查看会话",
@@ -2107,6 +2116,7 @@ const en = {
 	"action.fullscreen": "Fullscreen",
 	"action.regenerate": "Redraw",
 	"action.fill": "Fill",
+	"action.fillReset": "Reset",
 	"action.fillHint": "Scale the diagram to the window height, panning sideways when needed; click again to reset",
 	"action.delete": "Delete",
 	"action.openSession": "Open session",
